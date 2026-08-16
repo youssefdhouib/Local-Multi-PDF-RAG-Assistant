@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
-import { Copy, FileText, Check, Download, AlertCircle, Printer, BookOpen, Quote, FileDown } from "lucide-react";
+import { Copy, FileText, Check, AlertCircle, Printer, BookOpen, Quote, FileDown } from "lucide-react";
 import { summarizeDocument, summarizeLibrary, type SummaryResponse } from "@/lib/api";
 import { useDocuments } from "@/contexts/DocumentContext";
 import { Button } from "@/components/ui/button";
