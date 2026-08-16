@@ -13,7 +13,7 @@ Build, query, and export from a private RAG pipeline — no data ever leaves you
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 
-[![CI](https://github.com/dhouibyoussef/local-multi-pdf-rag-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/dhouibyoussef/local-multi-pdf-rag-assistant/actions/workflows/ci.yml)
+[![CI](https://github.com/youssefdhouib/Local-Multi-PDF-RAG-Assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/youssefdhouib/Local-Multi-PDF-RAG-Assistant/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 </div>
@@ -23,7 +23,7 @@ Build, query, and export from a private RAG pipeline — no data ever leaves you
 ## Demo
 
 <div align="center">
-  <video src="https://github.com/dhouibyoussef/local-multi-pdf-rag-assistant/raw/main/docs/demo.mp4" controls loop width="720"></video>
+  <video src="https://github.com/youssefdhouib/Local-Multi-PDF-RAG-Assistant/raw/main/docs/demo.mp4" controls loop width="720"></video>
   <br />
   <em>Add a short walkthrough video to <code>docs/demo.mp4</code> covering upload, chat with citations, summary, and quiz generation.</em>
 </div>
