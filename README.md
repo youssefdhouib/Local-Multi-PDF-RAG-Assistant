@@ -3,53 +3,54 @@
 # Local Multi-PDF RAG Assistant
 
 **A fully local, citation-grounded question-answering assistant for your PDF knowledge base.**
-Build, query, and export from a private RAG pipeline — no data ever leaves your machine.
+
+Query, summarize, and quiz your documents — powered by a private RAG pipeline. No data ever leaves your machine.
 
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-1.4.1-4B0082)](https://www.trychroma.com/)
-[![Ollama llama3.2](https://img.shields.io/badge/Ollama-llama3.2-00AEEF)](https://ollama.com/)
+[![Ollama](https://img.shields.io/badge/Ollama-llama3.2-00AEEF)](https://ollama.com/)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 
 [![CI](https://github.com/youssefdhouib/Local-Multi-PDF-RAG-Assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/youssefdhouib/Local-Multi-PDF-RAG-Assistant/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/youssefdhouib/Local-Multi-PDF-RAG-Assistant/pulls)
 
 </div>
 
 ---
 
+## Highlights
+
+- **Fully private & local** — extraction, embeddings, and generation all run on your machine (Ollama + Sentence-Transformers). Nothing is sent to the cloud.
+- **Hybrid PDF ingestion** — Unstructured parsing with an automatic PyMuPDF + Tesseract OCR fallback for scanned or multilingual pages (EN/FR/AR/DE/ES).
+- **Semantic chunking** — paragraph-aware chunks (~800 chars) with character-level overlap so context survives chunk boundaries.
+- **Persistent vector index** — ChromaDB with HNSW + cosine distance, plus SHA-256 fingerprinting to prevent duplicate uploads.
+- **Citation-grounded answers** — every response references `[E1]…[En]` with document, page, and chunk provenance; a relevance guardrail filters low-confidence retrieval to reduce hallucination.
+- **Beyond Q&A** — structured document/library summaries, MCQ quiz generation, and Markdown / PDF export.
+- **Intent-aware routing** — an LLM classifier sends small talk to chat mode and content questions to the RAG pipeline.
+- **Modern UI** — React 19 + Tailwind CSS + shadcn/ui with dark-ready design and an onboarding flow.
+
 ## Demo
 
-<div align="center">
-  <video src="https://github.com/youssefdhouib/Local-Multi-PDF-RAG-Assistant/raw/main/docs/demo.mp4" controls loop width="720"></video>
-  <br />
-  <em>Add a short walkthrough video to <code>docs/demo.mp4</code> covering upload, chat with citations, summary, and quiz generation.</em>
-</div>
+[![Watch the demo](docs/screenshots/demo_thumbnail.png)](docs/demo.mp4)
+
+Add a short walkthrough to `docs/demo.mp4` — upload a PDF, chat with citations, generate a summary, and run a quiz. *(Thumbnail is a placeholder.)*
 
 ## Screenshots
 
 <div align="center">
   <img src="docs/screenshots/chat.png" alt="Chat with citations" width="49%" />
   <img src="docs/screenshots/documents.png" alt="Document library" width="49%" />
-  <img src="docs/screenshots/summary.png" alt="Document summary" width="49%" />
+  <img src="docs/screenshots/summary.png" alt="Structured summary" width="49%" />
   <img src="docs/screenshots/quiz.png" alt="MCQ quiz" width="49%" />
 </div>
 
-> Screenshots live in [`docs/screenshots/`](docs/screenshots/). Replace the placeholders with your own captures.
+Replace the placeholders with your own captures in [`docs/screenshots/`](docs/screenshots/).
 
 ---
-
-## Highlights
-
-- **Fully private & local** — every step (extraction, embeddings, generation) runs on your machine via Ollama and Sentence-Transformers.
-- **Hybrid PDF ingestion** — Unstructured parsing with an automatic PyMuPDF + Tesseract OCR fallback for scanned or multilingual pages (EN/FR/AR/DE/ES).
-- **Semantic chunking** — paragraph-aware chunks (~800 chars) with character-level overlap so context survives across chunk boundaries.
-- **Persistent vector index** — ChromaDB with HNSW + cosine distance, plus SHA-256 fingerprinting to avoid duplicate uploads.
-- **Citation-grounded answers** — every response references `[E1]…[En]` with document, page, chunk, and distance, and a relevance guardrail rejects low-confidence retrieval to reduce hallucination.
-- **Beyond Q&A** — structured document/library summaries, an MCQ quiz generator, and Markdown / PDF export for all of it.
-- **Intent-aware routing** — an LLM classifier sends small talk to chat mode and content questions to the RAG pipeline.
 
 ## How it works
 
@@ -70,10 +71,10 @@ flowchart LR
     A --> UI
 ```
 
-1. **Ingest** — a PDF is uploaded, parsed by Unstructured, and automatically routed to an OCR pipeline (PyMuPDF + Tesseract) if a page is scanned or weak.
-2. **Chunk** — pages are normalized and split into paragraph-aware chunks with overlap, keeping meaning and page provenance intact.
+1. **Ingest** — a PDF is parsed by Unstructured and automatically routed to an OCR pipeline (PyMuPDF + Tesseract) if a page is scanned or weak.
+2. **Chunk** — pages are normalized and split into paragraph-aware chunks with overlap, preserving meaning and page provenance.
 3. **Embed** — chunks are embedded with `all-MiniLM-L6-v2` (normalized) and upserted into a persistent ChromaDB collection.
-4. **Retrieve** — a question is embedded and matched against the index; the best `top-k` chunks are filtered by a cosine distance guardrail.
+4. **Retrieve** — a question is embedded and matched against the index; the top-`k` chunks pass a cosine distance guardrail.
 5. **Answer** — Ollama `llama3.2` writes a Markdown answer grounded strictly in the retrieved evidence; the UI renders clickable citations.
 6. **Extend** — the same evidence powers summaries, MCQs, and Markdown/PDF exports.
 
@@ -100,7 +101,7 @@ flowchart LR
   ollama pull llama3.2
   ```
 
-- **Tesseract OCR** installed and on your `PATH` (only needed for scanned PDFs; text-based PDFs work without it).
+- **Tesseract OCR** installed and on your `PATH` (only needed for scanned PDFs).
 
 ### 1. Backend
 
@@ -114,9 +115,7 @@ pip install -r ../requirements.txt
 uvicorn web_server:app --reload --port 8000
 ```
 
-The API is now live at `http://localhost:8000` — interactive docs at [`http://localhost:8000/docs`](http://localhost:8000/docs).
-
-Drop PDFs into `backend/data/` or upload them later through the UI.
+The API is now live at `http://localhost:8000` — interactive docs at [`http://localhost:8000/docs`](http://localhost:8000/docs). Drop PDFs into `backend/data/` or upload them from the UI.
 
 ### 2. Frontend
 
@@ -132,7 +131,7 @@ Open [`http://localhost:5173`](http://localhost:5173) — the UI is wired to the
 
 ```bash
 pytest                      # unit tests (backend/tests)
-cd frontend && npm run build && npm run lint
+cd frontend && npm run lint && npm run build
 ```
 
 ## API reference
@@ -153,7 +152,7 @@ cd frontend && npm run build && npm run lint
 ## Project structure
 
 ```
-├── .github/workflows/       # CI: frontend lint+build, backend unit tests
+├── .github/workflows/       # CI: frontend lint + build, backend unit tests
 ├── backend/                 # Python RAG engine + FastAPI API
 │   ├── ingest/              # Hybrid extraction (Unstructured + OCR), chunking, ingestion service
 │   ├── features/            # Summaries, MCQ quiz, exports, intent router
@@ -182,6 +181,10 @@ cd frontend && npm run build && npm run lint
 - [ ] Docker Compose one-command setup
 - [ ] Optional configurable embedding backend (local or API)
 
+## Contributing
+
+Contributions are welcome. Open an issue to discuss changes, then submit a pull request on a feature branch. Keep commit messages in [Conventional Commits](https://www.conventionalcommits.org/) style.
+
 ## License
 
-Distributed under the [MIT License](LICENSE). See `LICENSE` for details.
+Distributed under the [MIT License](LICENSE).
