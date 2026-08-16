@@ -33,23 +33,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
     // Initial Greeting
     useEffect(() => {
-        // Reset chat with greeting when username changes
-        if (username) {
-            setMessages([
-                {
-                    role: "assistant",
-                    content: `Hello ${username}! I'm your MultiPDF Assistant. Upload documents to the sidebar and select them to start chatting contextually, or just ask me anything!`
-                }
-            ]);
-        } else if (messages.length === 0) {
-            // Default greeting if no user (fallback)
-            setMessages([
-                {
-                    role: "assistant",
-                    content: "Hello! I'm your MultiPDF Assistant. Upload documents to the sidebar and select them to start chatting contextually, or just ask me anything!"
-                }
-            ]);
-        }
+        // Keep existing messages; only seed the chat when it is empty and the
+        // username is known (or reset after logout).
+        setMessages((prev) => {
+            if (prev.length > 0) return prev;
+            const greeting = username
+                ? `Hello ${username}! I'm your MultiPDF Assistant. Upload documents to the sidebar and select them to start chatting contextually, or just ask me anything!`
+                : "Hello! I'm your MultiPDF Assistant. Upload documents to the sidebar and select them to start chatting contextually, or just ask me anything!";
+            return [{ role: "assistant", content: greeting }];
+        });
     }, [username]);
 
     const sendMessage = async (text: string = input) => {
@@ -89,8 +81,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 ...prev,
                 { role: "assistant", content: res.answer, citations: res.citations },
             ]);
-        } catch (err: any) {
-            toast({ title: "Error", description: err.message, variant: "destructive" });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Something went wrong";
+            toast({ title: "Error", description: message, variant: "destructive" });
             setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, I encountered an error answering that." }]);
         } finally {
             setLoading(false);

@@ -1,3 +1,5 @@
+import type { Citation, CitationInfo, MCQItem, QuizResponse, SummaryResponse } from "@/lib/api";
+
 export function downloadFile(content: string, filename: string, type: string = "text/markdown") {
     const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
@@ -10,7 +12,13 @@ export function downloadFile(content: string, filename: string, type: string = "
     URL.revokeObjectURL(url);
 }
 
-export function exportChatToMarkdown(messages: any[], selectedDocs: string[]) {
+interface ChatExportMessage {
+    role: "user" | "assistant";
+    content: string;
+    citations?: Citation[];
+}
+
+export function exportChatToMarkdown(messages: ChatExportMessage[], selectedDocs: string[]) {
     const timestamp = new Date().toISOString().split("T")[0];
     let md = `# RAG Assistant Chat Export - ${timestamp}\n\n`;
 
@@ -26,7 +34,7 @@ export function exportChatToMarkdown(messages: any[], selectedDocs: string[]) {
 
         if (msg.citations && msg.citations.length > 0) {
             md += `> **Sources**:\n`;
-            msg.citations.forEach((c: any) => {
+            msg.citations.forEach((c: Citation) => {
                 md += `> - *${c.doc}* (Page ${c.page}): "${c.text_snippet}"\n`;
             });
             md += `\n`;
@@ -37,7 +45,7 @@ export function exportChatToMarkdown(messages: any[], selectedDocs: string[]) {
     downloadFile(md, `chat_export_${timestamp}.md`);
 }
 
-export function exportSummaryToMarkdown(summary: any) {
+export function exportSummaryToMarkdown(summary: SummaryResponse) {
     if (!summary) return;
     const timestamp = new Date().toISOString().split("T")[0];
     let md = `# ${summary.title}\n\n`;
@@ -45,7 +53,7 @@ export function exportSummaryToMarkdown(summary: any) {
 
     if (summary.citations && summary.citations.length > 0) {
         md += `\n\n## Sources\n`;
-        summary.citations.forEach((c: any) => {
+        summary.citations.forEach((c: CitationInfo) => {
             // Handle different citation shapes if needed
             const doc = c.doc || c.document_name;
             const page = c.page || c.page_number;
@@ -56,12 +64,12 @@ export function exportSummaryToMarkdown(summary: any) {
     downloadFile(md, `summary_${timestamp}.md`);
 }
 
-export function exportQuizToMarkdown(quiz: any, withAnswers: boolean = false) {
+export function exportQuizToMarkdown(quiz: QuizResponse, withAnswers: boolean = false) {
     if (!quiz || !quiz.mcqs) return;
     const timestamp = new Date().toISOString().split("T")[0];
     let md = `# Quiz Export - ${timestamp}\n\n`;
 
-    quiz.mcqs.forEach((q: any, i: number) => {
+    quiz.mcqs.forEach((q: MCQItem, i: number) => {
         md += `### Q${i + 1}: ${q.question}\n`;
         q.options.forEach((opt: string, idx: number) => {
             const letter = String.fromCharCode(65 + idx);

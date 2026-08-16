@@ -63,7 +63,7 @@ export function Sidebar() {
         if (file) {
             try {
                 await uploadFile(file);
-            } catch (e) {
+            } catch {
                 // error handled in context
             }
         }

@@ -9,6 +9,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 
+declare global {
+    interface Window {
+        html2pdf?: (options?: Record<string, unknown>) => {
+            set: (options: Record<string, unknown>) => {
+                from: (element: HTMLElement) => {
+                    save: () => void;
+                };
+            };
+        };
+    }
+}
+
 export function SummaryPage() {
     const { toast } = useToast();
     const { selectedDocs } = useDocuments();
@@ -32,8 +44,9 @@ export function SummaryPage() {
                 res = await summarizeLibrary();
             }
             setSummary(res);
-        } catch (err: any) {
-            toast({ title: "Error", description: err.message, variant: "destructive" });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Summarization failed";
+            toast({ title: "Error", description: message, variant: "destructive" });
         } finally {
             setLoading(false);
         }
@@ -63,9 +76,7 @@ export function SummaryPage() {
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
         };
 
-        // @ts-ignore
         if (window.html2pdf) {
-            // @ts-ignore
             window.html2pdf().set(opt).from(element).save();
             toast({ title: "Generating PDF", description: "Your download will start shortly." });
         } else {

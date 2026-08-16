@@ -99,8 +99,9 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
                 description: res.message
             });
             await refreshDocuments(); // will trigger polling
-        } catch (error: any) {
-            toast({ title: "Upload Failed", description: error.message, variant: "destructive" });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Upload failed";
+            toast({ title: "Upload Failed", description: message, variant: "destructive" });
             throw error;
         } finally {
             setUploading(false);
@@ -118,8 +119,9 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
 
             // Refresh to confirm deletion from backend
             await refreshDocuments();
-        } catch (error: any) {
-            toast({ title: "Delete Failed", description: error.message, variant: "destructive" });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Delete failed";
+            toast({ title: "Delete Failed", description: message, variant: "destructive" });
             // Refresh to restore the document if delete failed
             await refreshDocuments();
         }
@@ -131,8 +133,9 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
             await reindexDocument(doc);
             toast({ title: "Re-indexing Started", description: `Updating index for ${doc}` });
             await refreshDocuments(); // starts polling
-        } catch (error: any) {
-            toast({ title: "Re-index Failed", description: error.message, variant: "destructive" });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Re-index failed";
+            toast({ title: "Re-index Failed", description: message, variant: "destructive" });
         } finally {
             setUploading(false);
         }

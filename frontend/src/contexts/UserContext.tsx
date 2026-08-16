@@ -1,5 +1,5 @@
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 
 interface UserContextType {
     username: string | null;
@@ -8,24 +8,20 @@ interface UserContextType {
     logout: () => void;
 }
 
+function readStoredUser(): { username: string | null; isOnboarded: boolean } {
+    const savedName = localStorage.getItem("rag_username");
+    const onboarded = localStorage.getItem("rag_onboarded") === "true";
+    if (savedName && onboarded) {
+        return { username: savedName, isOnboarded: true };
+    }
+    return { username: null, isOnboarded: false };
+}
+
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export function UserProvider({ children }: { children: ReactNode }) {
-    const [username, setUsername] = useState<string | null>(null);
-    const [isOnboarded, setIsOnboarded] = useState(false);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        // Load from storage on mount
-        const savedName = localStorage.getItem("rag_username");
-        const onboarded = localStorage.getItem("rag_onboarded") === "true";
-
-        if (savedName && onboarded) {
-            setUsername(savedName);
-            setIsOnboarded(true);
-        }
-        setLoading(false);
-    }, []);
+    const [username, setUsername] = useState<string | null>(readStoredUser().username);
+    const [isOnboarded, setIsOnboarded] = useState<boolean>(readStoredUser().isOnboarded);
 
     const updateUser = (name: string) => {
         const trimmed = name.trim();
@@ -43,8 +39,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("rag_username");
         localStorage.removeItem("rag_onboarded");
     };
-
-    if (loading) return null; // Or a splash screen
 
     return (
         <UserContext.Provider value={{ username, isOnboarded, updateUser, logout }}>

@@ -20,4 +20,13 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // shadcn/ui components and context providers co-locate exported
+    // constants/hooks with components by design; opt out of the
+    // fast-refresh-only-export-components rule for these files.
+    files: ['src/components/ui/**/*.tsx', 'src/contexts/**/*.tsx'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

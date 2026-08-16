@@ -14,10 +14,18 @@ export interface ChatResponse {
     citations: Citation[];
 }
 
+export interface CitationInfo {
+    doc?: string;
+    document_name?: string;
+    page?: number;
+    page_number?: number;
+    text_snippet?: string;
+}
+
 export interface SummaryResponse {
     title: string;
     markdown: string;
-    citations: any[];
+    citations: CitationInfo[];
 }
 
 export interface MCQItem {
@@ -25,7 +33,7 @@ export interface MCQItem {
     options: string[];
     correct_index: number;
     explanation: string;
-    citations: any[];
+    citations: CitationInfo[];
 }
 
 export interface QuizResponse {
@@ -49,7 +57,12 @@ export async function fetchDocuments(): Promise<Document[]> {
     return data.documents; // Now returns list of objects
 }
 
-export const uploadDocument = async (file: File): Promise<any> => {
+export interface ActionResponse {
+    status: string;
+    message: string;
+}
+
+export const uploadDocument = async (file: File): Promise<ActionResponse> => {
     const formData = new FormData();
     formData.append("file", file);
     const response = await fetch(`${API_BASE}/upload`, {
@@ -63,7 +76,7 @@ export const uploadDocument = async (file: File): Promise<any> => {
     return response.json();
 };
 
-export async function deleteDocument(docName: string): Promise<any> {
+export async function deleteDocument(docName: string): Promise<ActionResponse> {
     const res = await fetch(`${API_BASE}/delete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -76,7 +89,7 @@ export async function deleteDocument(docName: string): Promise<any> {
     return res.json();
 }
 
-export async function reindexDocument(docName: string): Promise<any> {
+export async function reindexDocument(docName: string): Promise<ActionResponse> {
     const res = await fetch(`${API_BASE}/reindex`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

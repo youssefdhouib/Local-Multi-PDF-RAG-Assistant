@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 interface DocumentsPageProps {
-    onNavigate: (page: string, context?: any) => void;
+    onNavigate: (page: string, context?: Record<string, unknown>) => void;
 }
 
 export function DocumentsPage({ onNavigate }: DocumentsPageProps) {
@@ -47,7 +47,7 @@ export function DocumentsPage({ onNavigate }: DocumentsPageProps) {
         if (file) {
             try {
                 await uploadFile(file);
-            } catch (e) {
+            } catch {
                 // toast handled in context
             }
         }
