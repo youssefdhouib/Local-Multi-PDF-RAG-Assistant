@@ -18,6 +18,8 @@ Query, summarize, and quiz your documents — powered by a private RAG pipeline.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/youssefdhouib/Local-Multi-PDF-RAG-Assistant/pulls)
 
+[Highlights](#highlights) · [Demo](#demo) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Tech stack](#tech-stack) · [Getting started](#getting-started) · [API reference](#api-reference) · [Project structure](#project-structure)
+
 </div>
 
 ---
@@ -55,28 +57,37 @@ Replace the placeholders with your own captures in [`docs/screenshots/`](docs/sc
 ## How it works
 
 ```mermaid
-flowchart LR
-    U[User] --> UI[React + Tailwind UI]
-    UI -->|REST /api| API[FastAPI Backend]
-    API --> ING[Ingestion Pipeline]
-    ING --> EX[Unstructured + OCR fallback]
-    EX --> CH[Semantic Chunking]
-    CH --> EM[Sentence-Transformers<br/>all-MiniLM-L6-v2]
-    EM --> DB[(ChromaDB<br/>cosine HNSW)]
-    UI --> Q[Query]
-    Q --> RET[Top-k retrieval<br/>+ distance guardrail]
-    RET --> DB
-    RET --> LLM[Ollama llama3.2]
-    LLM --> A[Answer + citations [E1..En]]
+flowchart TB
+    U["You"] --> UI["React + Tailwind UI"]
+
+    subgraph ingest["Ingestion pipeline"]
+        direction LR
+        PDF["PDF documents"] --> EXT["Unstructured + Tesseract OCR"]
+        EXT --> CHK["Paragraph-aware chunking (~800 chars, overlap)"]
+        CHK --> EMB["Sentence-Transformers<br/>all-MiniLM-L6-v2"]
+        EMB --> VDB[("ChromaDB<br/>cosine HNSW")]
+    end
+
+    subgraph answer["Retrieval & generation"]
+        direction LR
+        Q["Your question"] --> RET["Top-k retrieval<br/>+ distance guardrail"]
+        RET --> VDB
+        RET --> LLM["Ollama llama3.2"]
+        LLM --> A["Grounded answer + citations [E1..En]"]
+    end
+
+    UI --> Q
     A --> UI
 ```
 
-1. **Ingest** — a PDF is parsed by Unstructured and automatically routed to an OCR pipeline (PyMuPDF + Tesseract) if a page is scanned or weak.
-2. **Chunk** — pages are normalized and split into paragraph-aware chunks with overlap, preserving meaning and page provenance.
-3. **Embed** — chunks are embedded with `all-MiniLM-L6-v2` (normalized) and upserted into a persistent ChromaDB collection.
-4. **Retrieve** — a question is embedded and matched against the index; the top-`k` chunks pass a cosine distance guardrail.
-5. **Answer** — Ollama `llama3.2` writes a Markdown answer grounded strictly in the retrieved evidence; the UI renders clickable citations.
-6. **Extend** — the same evidence powers summaries, MCQs, and Markdown/PDF exports.
+| # | Phase | What happens |
+|---|---|---|
+| 1 | **Ingest** | A PDF is parsed by Unstructured and automatically routed to an OCR pipeline (PyMuPDF + Tesseract) if a page is scanned or weak. |
+| 2 | **Chunk** | Pages are normalized and split into paragraph-aware chunks (~800 chars) with overlap, preserving meaning and page provenance. |
+| 3 | **Embed** | Chunks are embedded with `all-MiniLM-L6-v2` and upserted into a persistent ChromaDB collection. |
+| 4 | **Retrieve** | The question is embedded and matched against the index; top-`k` chunks must pass a cosine-distance guardrail. |
+| 5 | **Answer** | Ollama `llama3.2` writes a Markdown answer grounded strictly in the retrieved evidence; the UI renders clickable citations. |
+| 6 | **Extend** | The same evidence powers summaries, MCQs, and Markdown/PDF exports. |
 
 ## Tech stack
 
@@ -169,17 +180,6 @@ cd frontend && npm run lint && npm run build
 ├── requirements.txt
 └── README.md
 ```
-
-## Roadmap
-
-- [x] Hybrid PDF ingestion with OCR fallback
-- [x] Persistent vector index with deduplication
-- [x] Citation-grounded Q&A + intent router
-- [x] Summaries, quizzes, Markdown/PDF export
-- [ ] Streaming chat responses (SSE)
-- [ ] Cross-encoder reranking for retrieval quality
-- [ ] Docker Compose one-command setup
-- [ ] Optional configurable embedding backend (local or API)
 
 ## Contributing
 
