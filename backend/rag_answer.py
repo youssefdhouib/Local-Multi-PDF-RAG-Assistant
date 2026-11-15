@@ -48,12 +48,9 @@ def _format_evidence(chunks: List[EvidenceChunk]) -> str:
     return "\n\n".join(parts)
 
 
-def _build_prompt(question: str, evidence_text: str, n_evidence: int) -> str:
-    """
-    Consumer-facing prompt: no inline [E1] citations, just clean structured text.
-    Sources are shown by the UI from the returned evidence list.
-    """
-    return f"""You are a helpful, professional AI assistant.
+# Prompt instructions, shared by the classic pipeline and the LangChain pipeline
+# (langchain_rag.py) so both engines ask the model for exactly the same thing.
+ANSWER_INSTRUCTIONS = """You are a helpful, professional AI assistant.
 
 INSTRUCTIONS:
 - Answer ONLY using the EVIDENCE below. Do not add outside knowledge.
@@ -61,7 +58,24 @@ INSTRUCTIONS:
 - Start with one short sentence that answers the question directly.
 - Then give the details as short Markdown bullet points (one idea per bullet).
 - End with a short "### Why this matters" section.
-- Do not repeat these instructions, and do not write inline references like [E1].
+- Do not repeat these instructions, and do not write inline references like [E1]."""
+
+SUMMARY_INSTRUCTIONS = """You are a helpful assistant summarizing document content.
+
+INSTRUCTIONS:
+1. **Structure**: Use Markdown headings (##) for main sections.
+2. **Format**: Use short bullet points for key takeaways.
+3. **Content**: Synthesize the core ideas from the excerpts below. Use only these excerpts.
+4. **Resilience**: If text is fragmented, piece together the context.
+5. **Closing**: End with a section "### Key Implication" or "### Why this matters"."""
+
+
+def _build_prompt(question: str, evidence_text: str, n_evidence: int) -> str:
+    """
+    Consumer-facing prompt: no inline [E1] citations, just clean structured text.
+    Sources are shown by the UI from the returned evidence list.
+    """
+    return f"""{ANSWER_INSTRUCTIONS}
 
 QUESTION:
 {question}
@@ -136,6 +150,50 @@ def has_relevant_evidence(question: str, where: Optional[Dict[str, Any]] = None)
     return bool(best) and best[0].distance <= RELEVANCE_THRESHOLD
 
 
+SUMMARY_KEYWORDS = [
+    "core idea", "key points", "main points", "overview", "aspects",
+    "résumé", "idée générale", "summarize", "summary"
+]
+
+
+def select_evidence(
+    question: str,
+    evidence: List[EvidenceChunk],
+    use_top_n_in_prompt: int,
+    max_distance: float,
+) -> Tuple[Optional[str], List[EvidenceChunk], bool]:
+    """
+    The relevance rules, shared by both engines (classic and LangChain):
+    - summary-style questions get more context and a relaxed threshold
+    - if the best chunk is too far away: refuse (and return NO sources)
+    - otherwise keep the top-N chunks that pass the threshold
+
+    Returns (refusal_answer or None, evidence_to_use, is_summary).
+    """
+    if not evidence:
+        return NO_EVIDENCE_ANSWER, [], False
+
+    # sort best-first (lower cosine distance = better match)
+    evidence_sorted = sorted(evidence, key=lambda x: x.distance)
+    best = evidence_sorted[0].distance
+    logger.info("Best chunk distance: %.4f", best)
+
+    is_summary = any(kw in question.lower() for kw in SUMMARY_KEYWORDS)
+    if is_summary:
+        use_top_n_in_prompt = 10  # Allow more context
+        max_distance = 1.0        # Relax guardrail for summaries
+
+    # Relevance guardrail: abstain instead of answering from unrelated text.
+    if best > max_distance:
+        logger.info("Guardrail triggered: best %.4f > %.2f", best, max_distance)
+        return LOW_RELEVANCE_ANSWER, [], is_summary
+
+    # Only the strongest chunks that ALSO pass the threshold go into the prompt
+    # (and therefore into the sources shown to the user).
+    used = [e for e in evidence_sorted[:use_top_n_in_prompt] if e.distance <= max_distance]
+    return None, used, is_summary
+
+
 def rag_answer(
     question: str,
     chroma_dir: str = DEFAULT_CHROMA_DIR,
@@ -164,35 +222,9 @@ def rag_answer(
         where=where,
     )
 
-    if not evidence:
-        return NO_EVIDENCE_ANSWER, []
-
-    # sort best-first (lower cosine distance = better match)
-    evidence_sorted = sorted(evidence, key=lambda x: x.distance)
-    best = evidence_sorted[0].distance
-    logger.info("Best chunk distance: %.4f", best)
-
-    # SUMMARY INTENT DETECTION
-    summary_keywords = [
-        "core idea", "key points", "main points", "overview", "aspects",
-        "résumé", "idée générale", "summarize", "summary"
-    ]
-    is_summary = any(kw in question.lower() for kw in summary_keywords)
-
-    # Adjust parameters for summary
-    if is_summary:
-        use_top_n_in_prompt = 10  # Allow more context
-        max_distance = 1.0        # Relax guardrail for summaries
-
-    # Relevance guardrail: abstain instead of answering from unrelated text.
-    # No citations are returned, because nothing was used to answer.
-    if best > max_distance:
-        logger.info("Guardrail triggered: best %.4f > %.2f", best, max_distance)
-        return LOW_RELEVANCE_ANSWER, []
-
-    # Only the strongest chunks that ALSO pass the threshold go into the prompt
-    # (and therefore into the sources shown to the user).
-    evidence_used = [e for e in evidence_sorted[:use_top_n_in_prompt] if e.distance <= max_distance]
+    refusal, evidence_used, is_summary = select_evidence(question, evidence, use_top_n_in_prompt, max_distance)
+    if refusal:
+        return refusal, []
 
     evidence_text = _format_evidence(evidence_used)
 
@@ -214,14 +246,7 @@ def rag_answer(
 
 
 def _build_summary_prompt(question: str, evidence_text: str) -> str:
-    return f"""You are a helpful assistant summarizing document content.
-
-INSTRUCTIONS:
-1. **Structure**: Use Markdown headings (##) for main sections.
-2. **Format**: Use short bullet points for key takeaways.
-3. **Content**: Synthesize the core ideas from the excerpts below. Use only these excerpts.
-4. **Resilience**: If text is fragmented, piece together the context.
-5. **Closing**: End with a section "### Key Implication" or "### Why this matters".
+    return f"""{SUMMARY_INSTRUCTIONS}
 
 QUESTION:
 {question}

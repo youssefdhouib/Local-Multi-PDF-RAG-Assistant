@@ -2,7 +2,10 @@
 Small end-to-end evaluation of the RAG pipeline (real embeddings, real Chroma, real Ollama).
 
     cd backend
-    python eval/run_eval.py            # uses OLLAMA_MODEL (default qwen2.5:3b)
+    python eval/run_eval.py                       # LangChain engine (default)
+    RAG_ENGINE=classic python eval/run_eval.py    # classic engine, for comparison
+
+Uses OLLAMA_MODEL (default qwen2.5:3b) and the same RAG_ENGINE switch as the API.
 
 It indexes eval/sample_pdfs/ into a TEMPORARY folder (your real data/ and storage/
 are never touched) and measures:
@@ -27,9 +30,12 @@ work = Path(tempfile.mkdtemp(prefix="rag_eval_"))
 os.chdir(work)  # the app stores data/ and storage/ relative to the current folder
 
 from ingest.service import ingest_service, safe_pdf_path        # noqa: E402
-from rag_answer import rag_answer, has_relevant_evidence        # noqa: E402
+from rag_answer import has_relevant_evidence                    # noqa: E402
+from web_server import RAG_ENGINE, RAG_ENGINES                  # noqa: E402  same switch as the API
 from features.router import classify_intent                     # noqa: E402
 from features.ollama_client import OLLAMA_MODEL                 # noqa: E402
+
+answer_fn = RAG_ENGINES[RAG_ENGINE]  # the engine under test (classic or langchain)
 
 REFUSAL_MARKERS = ["don't know", "couldn't find", "not mentioned", "does not mention", "not provided"]
 
@@ -56,7 +62,7 @@ hit1 = hit3 = correct = false_refusals = 0
 # 2. In-scope questions
 for item in data["in_scope"]:
     t = time.time()
-    answer, sources = rag_answer(item["q"])
+    answer, sources = answer_fn(item["q"])
     latencies.append(time.time() - t)
     found = [(s.doc, s.page) for s in sources]
     target = (item["doc"], item["page"])
@@ -76,7 +82,7 @@ for item in data["in_scope"]:
 correct_refusals = 0
 oos_rows = []
 for q in data["out_of_scope"]:
-    answer, sources = rag_answer(q)
+    answer, sources = answer_fn(q)
     ok = refused(answer)
     correct_refusals += ok
     oos_rows.append((q, "refused" if ok else "ANSWERED", len(sources), answer[:90].replace("\n", " ")))
@@ -91,7 +97,7 @@ for expected, questions in [("CHAT", data["routing"]["chat"]), ("DOC", data["rou
         route_rows.append((q, expected, llm, final))
 
 n, m, r = len(data["in_scope"]), len(data["out_of_scope"]), len(route_rows)
-print(f"\n===== RAG evaluation | model={OLLAMA_MODEL} | {n} in-scope, {m} out-of-scope, {r} routing questions =====")
+print(f"\n===== RAG evaluation | engine={RAG_ENGINE} ({answer_fn.__name__}) | model={OLLAMA_MODEL} | {n} in-scope, {m} out-of-scope, {r} routing questions =====")
 print(f"retrieval hit@1           : {pct(hit1, n)}")
 print(f"retrieval hit@3 (sources) : {pct(hit3, n)}")
 print(f"answer accuracy           : {pct(correct, n)}")

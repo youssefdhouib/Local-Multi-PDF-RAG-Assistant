@@ -94,6 +94,8 @@ def env(tmp_path, monkeypatch):
     # Default: router says DOC, LLM returns a fixed answer (no real Ollama).
     import rag_answer
     real_ollama_generate = rag_answer._ollama_generate
+    # These tests check the classic pipeline; LangChain has its own tests (test_langchain_rag.py).
+    monkeypatch.setattr(web_server, "RAG_ENGINE", "classic")
     monkeypatch.setattr(web_server, "classify_intent", lambda q: "DOC")
     monkeypatch.setattr(rag_answer, "_ollama_generate", lambda **kw: "STUB ANSWER")
 

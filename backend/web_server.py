@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 # No try/except here on purpose: if a module is missing, the server must fail
 # at startup with the real ImportError instead of serving fake "dummy" answers.
 from rag_answer import rag_answer, has_relevant_evidence
+from langchain_rag import langchain_rag_answer
 from features.summarize import summarize_document, summarize_library
 from features.mcq_generator import generate_mcqs_for_document, generate_mcqs_for_library
 from features.router import classify_intent, chat_with_ollama
@@ -21,6 +22,15 @@ from ingest.service import ingest_service, safe_pdf_path
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "50"))
+
+# Which document Q&A pipeline answers /api/chat:
+#   langchain = built with LangChain components (langchain_rag.py), the default
+#   classic   = same rules, hand-written pipeline (rag_answer.py); kept for rollback and comparison
+RAG_ENGINES = {"classic": rag_answer, "langchain": langchain_rag_answer}
+DEFAULT_RAG_ENGINE = "langchain"
+RAG_ENGINE = os.environ.get("RAG_ENGINE", DEFAULT_RAG_ENGINE)
+if RAG_ENGINE not in RAG_ENGINES:
+    raise ValueError(f"RAG_ENGINE must be one of {list(RAG_ENGINES)}, got {RAG_ENGINE!r}")
 
 
 # --- Data Models ---
@@ -119,7 +129,7 @@ def build_where(doc_name: Optional[str], doc_names: Optional[List[str]]) -> Opti
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "service": "Local RAG Assistant"}
+    return {"status": "ok", "service": "Local RAG Assistant", "rag_engine": RAG_ENGINE}
 
 
 @app.get("/api/documents")
@@ -228,8 +238,8 @@ def chat_endpoint(req: ChatRequest):
             ans = chat_with_ollama(req.question)
             return ChatResponse(answer=ans, citations=[])
 
-        # DOC intent -> RAG
-        answer, evidence_chunks = rag_answer(
+        # DOC intent -> RAG, with the engine chosen by RAG_ENGINE (same inputs and outputs)
+        answer, evidence_chunks = RAG_ENGINES[RAG_ENGINE](
             question=req.question,
             top_k=req.top_k,
             where=where_clause,

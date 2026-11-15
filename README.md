@@ -89,6 +89,20 @@ flowchart TB
 | 5 | **Answer** | Ollama `qwen2.5:3b` writes a Markdown answer grounded strictly in the retrieved evidence; the UI renders clickable citations. |
 | 6 | **Extend** | The same evidence powers summaries, MCQs, and Markdown/PDF exports. |
 
+### Two Q&A engines: classic and LangChain
+
+Document Q&A can run on two interchangeable pipelines, chosen with `RAG_ENGINE`. The default is `langchain`; `classic` is kept for rollback and comparison:
+
+| | `classic` ([`rag_answer.py`](backend/rag_answer.py)) | `langchain` ([`langchain_rag.py`](backend/langchain_rag.py)) |
+|---|---|---|
+| Retrieval | direct ChromaDB query | LangChain `Chroma` vector store on the **same index** |
+| Embeddings | cached Sentence-Transformers model | the same model behind LangChain's `Embeddings` interface |
+| Prompt | Python f-string | `ChatPromptTemplate` (system instructions + question + evidence) |
+| LLM call | HTTP to Ollama `/api/generate` | `ChatOllama` in an LCEL chain: `prompt \| llm \| StrOutputParser()` |
+| Relevance rules, refusals, sources | shared `select_evidence()` | shared `select_evidence()` |
+
+Both return the same answer/sources shape, so the API and the UI do not change. LangChain does not make answers more accurate by itself; it gives standard, swappable building blocks (another LLM or vector store is a one-class change), prompt templates, fake models for testing, and the foundation for a LangGraph workflow. Both engines scored the same on the evaluation, with identical retrieval. Compare them yourself: `python eval/run_eval.py` (LangChain) and `RAG_ENGINE=classic python eval/run_eval.py`. To roll back the API, start it with `RAG_ENGINE=classic`. The other features (summaries, quizzes, intent routing) use the classic code in both modes.
+
 ## Tech stack
 
 | Layer | Technology |
@@ -97,6 +111,7 @@ flowchart TB
 | Vector store | ChromaDB (persistent, cosine HNSW) |
 | Embeddings | Sentence-Transformers `all-MiniLM-L6-v2` |
 | LLM | Ollama — `qwen2.5:3b` by default (any Ollama model via `OLLAMA_MODEL`) |
+| RAG orchestration | LangChain (`langchain-core`, `langchain-chroma`, `langchain-ollama`) by default; hand-written pipeline via `RAG_ENGINE=classic` |
 | PDF parsing | PyMuPDF · Tesseract OCR (optional) · Unstructured (optional) · langdetect |
 | Frontend | React 19 · Vite · TypeScript · Tailwind CSS · shadcn/ui |
 | Export | jsPDF / ReportLab · Markdown |
@@ -126,7 +141,7 @@ pip install -r ../requirements.txt
 uvicorn web_server:app --reload --port 8000
 ```
 
-Optional settings (environment variables): `OLLAMA_MODEL` (default `qwen2.5:3b`; e.g. `llama3.2` also works), `OLLAMA_URL` (default `http://localhost:11434`), `MAX_UPLOAD_MB` (default `50`), `CORS_ORIGINS` (default `http://localhost:5173,http://127.0.0.1:5173`), `TESSERACT_CMD` (path to `tesseract.exe` if it is not on `PATH`; the standard Windows install folder is detected automatically), `OCR_LANGS` (default `fra+eng`; languages that are not installed are skipped with a warning — add French by copying `fra.traineddata` into Tesseract's `tessdata` folder).
+Optional settings (environment variables): `RAG_ENGINE` (`langchain` default, or `classic` to roll back), `OLLAMA_MODEL` (default `qwen2.5:3b`; e.g. `llama3.2` also works), `OLLAMA_URL` (default `http://localhost:11434`), `MAX_UPLOAD_MB` (default `50`), `CORS_ORIGINS` (default `http://localhost:5173,http://127.0.0.1:5173`), `TESSERACT_CMD` (path to `tesseract.exe` if it is not on `PATH`; the standard Windows install folder is detected automatically), `OCR_LANGS` (default `fra+eng`; languages that are not installed are skipped with a warning — add French by copying `fra.traineddata` into Tesseract's `tessdata` folder).
 
 The API is now live at `http://localhost:8000` — interactive docs at [`http://localhost:8000/docs`](http://localhost:8000/docs). Upload PDFs from the UI (files copied manually into `backend/data/` are not indexed until uploaded).
 
