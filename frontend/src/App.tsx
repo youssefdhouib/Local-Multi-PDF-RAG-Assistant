@@ -7,7 +7,7 @@ import { SummaryPage } from "@/pages/SummaryPage";
 import { QuizPage } from "@/pages/QuizPage";
 import { OnboardingPage } from "@/pages/OnboardingPage"; // Import Onboarding
 import { MessageSquare, Files, BookOpen, GraduationCap } from "lucide-react";
-import { DocumentProvider } from "@/contexts/DocumentContext";
+import { DocumentProvider, useDocuments } from "@/contexts/DocumentContext";
 import { Sidebar, TopBar } from "@/components/Layout";
 import { ChatProvider } from "@/contexts/ChatContext";
 import { UserProvider, useUser } from "@/contexts/UserContext"; // Import User Context
@@ -15,6 +15,8 @@ import { UserProvider, useUser } from "@/contexts/UserContext"; // Import User C
 function AppContent() {
   const { isOnboarded } = useUser();
   const [activeTab, setActiveTab] = useState("chat");
+  const { selectedDocs } = useDocuments();
+  const selectionKey = selectedDocs.join("|");
 
   if (!isOnboarded) {
     return <OnboardingPage />;
@@ -51,11 +53,17 @@ function AppContent() {
               <TabsContent value="documents" className="h-full overflow-auto m-0">
                 <DocumentsPage onNavigate={handleNavigate} />
               </TabsContent>
-              <TabsContent value="summary" className="h-full overflow-hidden m-0">
-                <SummaryPage />
+              {/*
+                forceMount: keep Summary and Quiz alive when you switch tabs (only hide them),
+                so a generated summary, a quiz in progress, or a running request is not lost.
+                key: when the selected PDFs change, React starts these pages fresh, so you never
+                see one document's summary or quiz under another document's name.
+              */}
+              <TabsContent value="summary" forceMount className="h-full overflow-hidden m-0 data-[state=inactive]:hidden">
+                <SummaryPage key={selectionKey} />
               </TabsContent>
-              <TabsContent value="quiz" className="h-full overflow-hidden m-0">
-                <QuizPage />
+              <TabsContent value="quiz" forceMount className="h-full overflow-hidden m-0 data-[state=inactive]:hidden">
+                <QuizPage key={selectionKey} />
               </TabsContent>
             </div>
           </Tabs>
