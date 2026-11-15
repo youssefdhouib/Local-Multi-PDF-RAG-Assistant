@@ -1,12 +1,11 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Dict, Any, Tuple
-import requests
-
+from features import ollama_client
 from features.chroma_utils import fetch_doc_chunks, fetch_library_sample
 
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "llama3.2"
+DEFAULT_OLLAMA_URL = ollama_client.OLLAMA_URL
+DEFAULT_OLLAMA_MODEL = ollama_client.OLLAMA_MODEL
 
 
 @dataclass
@@ -17,16 +16,10 @@ class SummaryResult:
 
 
 def ollama_generate(prompt: str, model: str, ollama_url: str, temperature: float = 0.2) -> str:
-    endpoint = ollama_url.rstrip("/") + "/api/generate"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": temperature},
-    }
-    r = requests.post(endpoint, json=payload, timeout=240)
-    r.raise_for_status()
-    return r.json().get("response", "").strip()
+    # Raises ollama_client.OllamaError (-> HTTP 503) if Ollama is unavailable.
+    return ollama_client.generate(
+        prompt, model=model, ollama_url=ollama_url, temperature=temperature, timeout=240
+    )
 
 
 def format_evidence(

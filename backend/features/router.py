@@ -1,29 +1,16 @@
-import requests
 import logging
 
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "llama3.2"
+from features import ollama_client
+
+DEFAULT_OLLAMA_URL = ollama_client.OLLAMA_URL
+DEFAULT_OLLAMA_MODEL = ollama_client.OLLAMA_MODEL
+
+logger = logging.getLogger(__name__)
+
 
 def _call_ollama(prompt: str, model: str = DEFAULT_OLLAMA_MODEL, system: str = None) -> str:
-    url = f"{DEFAULT_OLLAMA_URL}/api/generate"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.1}, # Low temp for router
-    }
-    if system:
-        payload["system"] = system
-
-    try:
-        r = requests.post(url, json=payload, timeout=60)
-        r.raise_for_status()
-        return r.json().get("response", "").strip()
-    except Exception as e:
-        logging.error(f"Ollama call failed: {e}")
-        # Return empty string or handle error
-        raise e
-
+    # Raises ollama_client.OllamaError when Ollama is unreachable or the model is missing.
+    return ollama_client.generate(prompt, model=model, system=system, temperature=0.1, timeout=60)
 def classify_intent(query: str, model: str = DEFAULT_OLLAMA_MODEL) -> str:
     """
     Classifies the user query as 'CHAT' or 'DOC'.
@@ -44,8 +31,11 @@ def classify_intent(query: str, model: str = DEFAULT_OLLAMA_MODEL) -> str:
         if "DOC" in intent:
             return "DOC"
         return "CHAT"
-    except Exception:
-        return "DOC" # Fallback to RAG
+    except ollama_client.OllamaError as e:
+        # Safe default: try the documents. If Ollama is really down, the RAG
+        # step will raise the same error and the API reports it as 503.
+        logger.warning("Intent classification failed (%s); defaulting to DOC", e)
+        return "DOC"
 
 def chat_with_ollama(query: str, model: str = DEFAULT_OLLAMA_MODEL) -> str:
     """
@@ -61,7 +51,6 @@ def chat_with_ollama(query: str, model: str = DEFAULT_OLLAMA_MODEL) -> str:
     Be professional, polite, and concise. Do NOT hallucinate about document content if you haven't seen it (this mode is for general chat).
     """
     
-    try:
-        return _call_ollama(query, model=model, system=system_prompt)
-    except Exception:
-        return "I'm having trouble connecting to my language model. Please try again."
+    # OllamaError propagates so the API can return a clear 503 instead of
+    # pretending this error text is a normal answer.
+    return _call_ollama(query, model=model, system=system_prompt)

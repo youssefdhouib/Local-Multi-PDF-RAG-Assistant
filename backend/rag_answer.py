@@ -1,8 +1,9 @@
-import requests
-import chromadb
+import logging
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any, Tuple
-from sentence_transformers import SentenceTransformer
+
+from features import embeddings, ollama_client
+from features.chroma_utils import get_collection
 
 
 # ---------------------------
@@ -10,9 +11,20 @@ from sentence_transformers import SentenceTransformer
 # ---------------------------
 DEFAULT_CHROMA_DIR = "storage/chroma_db"
 DEFAULT_COLLECTION = "pdf_chunks"
-DEFAULT_EMBED_MODEL = "all-MiniLM-L6-v2"
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "llama3.2"
+DEFAULT_EMBED_MODEL = embeddings.EMBED_MODEL_NAME
+DEFAULT_OLLAMA_URL = ollama_client.OLLAMA_URL
+DEFAULT_OLLAMA_MODEL = ollama_client.OLLAMA_MODEL
+
+NO_EVIDENCE_ANSWER = "I don't know based on the provided documents."
+
+# Cosine distance above which a chunk is "not relevant enough" (0 = identical, 2 = opposite).
+RELEVANCE_THRESHOLD = 0.75
+LOW_RELEVANCE_ANSWER = (
+    "I couldn't find this in your documents. The closest passages were not "
+    "relevant enough to answer reliably, so I won't guess."
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,7 +39,7 @@ class EvidenceChunk:
 def _format_evidence(chunks: List[EvidenceChunk]) -> str:
     """
     Context given to the LLM. We include stable IDs [E1], [E2], ...
-    so citations are deterministic and auditable.
+    so the evidence list is deterministic and auditable.
     """
     parts = []
     for i, c in enumerate(chunks, start=1):
@@ -39,18 +51,17 @@ def _format_evidence(chunks: List[EvidenceChunk]) -> str:
 def _build_prompt(question: str, evidence_text: str, n_evidence: int) -> str:
     """
     Consumer-facing prompt: no inline [E1] citations, just clean structured text.
-    Attributes are handled by the UI via the evidence object.
+    Sources are shown by the UI from the returned evidence list.
     """
     return f"""You are a helpful, professional AI assistant.
 
 INSTRUCTIONS:
-1. **Structure**: Use Markdown headings (##) to organize your answer.
-2. **Format**: Use short bullet points (one idea per bullet) for the main content.
-3. ** terminology**: Normalize terms to standard Scrum concepts (e.g., use "Daily Scrum" instead of "Daily Meeting" if applicable).
-4. **Content**: Answer ONLY using the EVIDENCE provided. Avoid repetition.
-5. **Intro**: Start with a single, short introductory sentence.
-6. **Closing**: End with a section titled "### Why this matters" explaining the practical importance of these points.
-7. **Citations**: Do NOT use inline citations like [E1].
+- Answer ONLY using the EVIDENCE below. Do not add outside knowledge.
+- If the EVIDENCE does not contain the answer, reply exactly "I don't know based on the provided documents." and stop.
+- Start with one short sentence that answers the question directly.
+- Then give the details as short Markdown bullet points (one idea per bullet).
+- End with a short "### Why this matters" section.
+- Do not repeat these instructions, and do not write inline references like [E1].
 
 QUESTION:
 {question}
@@ -68,30 +79,10 @@ def _ollama_generate(
     ollama_url: str = DEFAULT_OLLAMA_URL,
     temperature: float = 0.2,
 ) -> str:
-    """
-    Calls Ollama locally via HTTP API.
-    Returns a friendly message if Ollama is not reachable.
-    """
-    url = ollama_url.rstrip("/") + "/api/generate"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": temperature},
-    }
-
-    try:
-        r = requests.post(url, json=payload, timeout=120)
-        r.raise_for_status()
-        return r.json().get("response", "").strip()
-    except requests.exceptions.ConnectionError:
-        return (
-            "❌ Ollama server not reachable.\n"
-            "Start it with: `ollama serve`\n"
-            "Then retry."
-        )
-    except requests.exceptions.RequestException as e:
-        return f"❌ Ollama request failed: {e}"
+    """Calls Ollama. Raises ollama_client.OllamaError if it is unreachable."""
+    return ollama_client.generate(
+        prompt, model=model, ollama_url=ollama_url, temperature=temperature, timeout=120
+    )
 
 
 def retrieve_chunks(
@@ -104,13 +95,12 @@ def retrieve_chunks(
 ) -> List[EvidenceChunk]:
     """
     Retrieve top-k evidence chunks from Chroma for a given question.
-    where can be: {"doc": "...pdf"} or {"lang": "fr"} etc.
+    where can be: {"doc": "a.pdf"} or {"doc": {"$in": ["a.pdf", "b.pdf"]}}.
     """
-    embedder = SentenceTransformer(embed_model_name)
+    embedder = embeddings.get_embedder(embed_model_name)  # cached, loaded once
     q_emb = embedder.encode(question, normalize_embeddings=True).tolist()
 
-    client = chromadb.PersistentClient(path=chroma_dir)
-    collection = client.get_collection(collection_name)
+    collection = get_collection(chroma_dir, collection_name)
 
     results = collection.query(
         query_embeddings=[q_emb],
@@ -119,9 +109,9 @@ def retrieve_chunks(
         include=["documents", "metadatas", "distances"],
     )
 
-    docs = results["documents"][0]
-    metas = results["metadatas"][0]
-    dists = results.get("distances", [[None] * len(docs)])[0]
+    docs = results["documents"][0] if results.get("documents") else []
+    metas = results["metadatas"][0] if results.get("metadatas") else []
+    dists = results["distances"][0] if results.get("distances") else [None] * len(docs)
 
     evidence: List[EvidenceChunk] = []
     for text, meta, dist in zip(docs, metas, dists):
@@ -137,6 +127,15 @@ def retrieve_chunks(
     return evidence
 
 
+def has_relevant_evidence(question: str, where: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Quick check without the LLM: is there at least one chunk close enough to answer from?
+    Used to overrule the router when it wrongly labels a document question as small talk.
+    """
+    best = retrieve_chunks(question, top_k=1, where=where)
+    return bool(best) and best[0].distance <= RELEVANCE_THRESHOLD
+
+
 def rag_answer(
     question: str,
     chroma_dir: str = DEFAULT_CHROMA_DIR,
@@ -147,14 +146,14 @@ def rag_answer(
     top_k: int = 6,
     use_top_n_in_prompt: int = 3,
     where: Optional[Dict[str, Any]] = None,
-    max_distance: float = 0.75,
+    max_distance: float = RELEVANCE_THRESHOLD,
 ) -> Tuple[str, List[EvidenceChunk]]:
     """
     Full RAG:
     - retrieve evidence
-    - guardrail: if best chunk is too weak, refuse
-    - ONLY pass top-N best chunks to the LLM (to avoid messy citations)
-    - return answer + evidence_used (for UI citations panel)
+    - guardrail: if the best chunk is too far away, abstain (and return NO citations)
+    - ONLY pass top-N best chunks to the LLM
+    - return answer + evidence actually given to the LLM (for the UI sources panel)
     """
     evidence = retrieve_chunks(
         question=question,
@@ -166,42 +165,43 @@ def rag_answer(
     )
 
     if not evidence:
-        return "I don't know based on the provided documents.", []
+        return NO_EVIDENCE_ANSWER, []
 
-    # sort best-first (lower distance = better match)
+    # sort best-first (lower cosine distance = better match)
     evidence_sorted = sorted(evidence, key=lambda x: x.distance)
     best = evidence_sorted[0].distance
-    print(f"DEBUG: Best chunk distance: {best}")
+    logger.info("Best chunk distance: %.4f", best)
 
     # SUMMARY INTENT DETECTION
     summary_keywords = [
-        "core idea", "key points", "main points", "overview", "aspects", 
+        "core idea", "key points", "main points", "overview", "aspects",
         "résumé", "idée générale", "summarize", "summary"
     ]
     is_summary = any(kw in question.lower() for kw in summary_keywords)
-    
+
     # Adjust parameters for summary
     if is_summary:
-        print("DEBUG: Summary intent detected using specific summary prompt.")
-        use_top_n_in_prompt = 10 # Allow more context
-        max_distance = 1.0       # Relax guardrail significantly for summaries
-    
-    # hallucination guard
-    if best > max_distance:
-        print(f"DEBUG: Guardrail triggered. Best {best} > {max_distance}")
-        return "I don't know based on the provided documents (relevance too low).", evidence_sorted[:use_top_n_in_prompt]
+        use_top_n_in_prompt = 10  # Allow more context
+        max_distance = 1.0        # Relax guardrail for summaries
 
-    # only strongest chunks go into prompt
-    evidence_used = evidence_sorted[:use_top_n_in_prompt]
+    # Relevance guardrail: abstain instead of answering from unrelated text.
+    # No citations are returned, because nothing was used to answer.
+    if best > max_distance:
+        logger.info("Guardrail triggered: best %.4f > %.2f", best, max_distance)
+        return LOW_RELEVANCE_ANSWER, []
+
+    # Only the strongest chunks that ALSO pass the threshold go into the prompt
+    # (and therefore into the sources shown to the user).
+    evidence_used = [e for e in evidence_sorted[:use_top_n_in_prompt] if e.distance <= max_distance]
 
     evidence_text = _format_evidence(evidence_used)
-    
+
     if is_summary:
         prompt = _build_summary_prompt(question, evidence_text)
     else:
         prompt = _build_prompt(question, evidence_text, n_evidence=len(evidence_used))
 
-    print(f"DEBUG PROMPT (first 2000 chars):\n{prompt[:2000]}")
+    logger.debug("Prompt (first 2000 chars):\n%s", prompt[:2000])
 
     answer = _ollama_generate(
         prompt=prompt,
@@ -212,14 +212,15 @@ def rag_answer(
 
     return answer, evidence_used
 
+
 def _build_summary_prompt(question: str, evidence_text: str) -> str:
     return f"""You are a helpful assistant summarizing document content.
-    
+
 INSTRUCTIONS:
 1. **Structure**: Use Markdown headings (##) for main sections.
 2. **Format**: Use short bullet points for key takeaways.
-3. **Content**: Synthesize the core ideas from the excerpts below.
-4. **Resilience**: If text is fragmented, piece together the context. Do NOT refuse to answer.
+3. **Content**: Synthesize the core ideas from the excerpts below. Use only these excerpts.
+4. **Resilience**: If text is fragmented, piece together the context.
 5. **Closing**: End with a section "### Key Implication" or "### Why this matters".
 
 QUESTION:

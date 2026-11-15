@@ -1,3 +1,5 @@
+import logging
+import os
 from pathlib import Path
 import fitz  # PyMuPDF
 from PIL import Image
@@ -5,9 +7,19 @@ import pytesseract
 from langdetect import detect, DetectorFactory
 
 DetectorFactory.seed = 0
+logger = logging.getLogger(__name__)
 
-# For OCR you can pass combined langs like "fra+eng"
-DEFAULT_OCR_LANGS = "fra+eng"
+# Where the Tesseract program is. On Windows the installer does not add it to
+# PATH, so we also try its standard install folder. Override with TESSERACT_CMD.
+_WINDOWS_DEFAULT_TESSERACT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+_tesseract_cmd = os.environ.get("TESSERACT_CMD") or (
+    _WINDOWS_DEFAULT_TESSERACT if Path(_WINDOWS_DEFAULT_TESSERACT).exists() else None
+)
+if _tesseract_cmd:
+    pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
+
+# OCR languages, combined with "+" (e.g. "fra+eng"). Override with OCR_LANGS.
+DEFAULT_OCR_LANGS = os.environ.get("OCR_LANGS", "fra+eng")
 
 LANG_MAP = {"en": "eng", "fr": "fra", "ar": "ara", "de": "deu", "es": "spa"}
 
@@ -20,6 +32,21 @@ def detect_lang(text: str, default="unknown"):
         return detect(t) if len(t) >= 60 else default
     except Exception:
         return default
+
+def usable_ocr_langs(wanted: str) -> str:
+    """
+    Keep only the languages Tesseract actually has installed.
+    A default Windows install has only English; asking for "fra+eng" would
+    then fail for every page, so we fall back to what is available.
+    """
+    try:
+        installed = set(pytesseract.get_languages(config=""))
+    except Exception:
+        return wanted  # Tesseract missing: OCR will fail later and the page is skipped
+    usable = [lang for lang in wanted.split("+") if lang in installed]
+    if len(usable) < len(wanted.split("+")):
+        logger.warning("OCR languages %s requested, only %s installed", wanted, usable or ["eng"])
+    return "+".join(usable) or "eng"
 
 def map_tesseract(lang_code: str) -> str:
     # single-language mapping (when you want it)
@@ -86,6 +113,7 @@ def process_pdf_custom(pdf_path: Path, weak_th: int = 80, dpi: int = 200, ocr_la
     """
     doc = fitz.open(str(pdf_path))
     scanned = is_scanned_pdf(doc)
+    ocr_langs = usable_ocr_langs(ocr_langs)
 
     # Decide a stable doc language
     if scanned:
@@ -107,7 +135,16 @@ def process_pdf_custom(pdf_path: Path, weak_th: int = 80, dpi: int = 200, ocr_la
         native = extract_native(page)
         need_ocr = scanned or (len(native) < weak_th)
 
-        ocr = ocr_page(page, page_ocr_langs, dpi=dpi) if need_ocr else ""
+        ocr = ""
+        if need_ocr:
+            try:
+                ocr = ocr_page(page, page_ocr_langs, dpi=dpi)
+            except Exception as e:
+                # e.g. Tesseract not installed. Before, one blank/short page made the
+                # whole upload fail. Now we keep the page's native text (if any).
+                logger.warning("OCR failed for %s page %d (%s); using native text only",
+                               pdf_path.name, page_num, e)
+                need_ocr = False
 
         # Merge
         if native and not need_ocr:
@@ -131,4 +168,6 @@ def process_pdf_custom(pdf_path: Path, weak_th: int = 80, dpi: int = 200, ocr_la
                 "char_len": len(text),
             })
 
+    # Release the file handle (on Windows an open handle blocks deleting the PDF).
+    doc.close()
     return out

@@ -9,7 +9,7 @@ Query, summarize, and quiz your documents — powered by a private RAG pipeline.
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-1.4.1-4B0082)](https://www.trychroma.com/)
-[![Ollama](https://img.shields.io/badge/Ollama-llama3.2-00AEEF)](https://ollama.com/)
+[![Ollama](https://img.shields.io/badge/Ollama-qwen2.5:3b-00AEEF)](https://ollama.com/)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
@@ -27,10 +27,10 @@ Query, summarize, and quiz your documents — powered by a private RAG pipeline.
 ## Highlights
 
 - **Fully private & local** — extraction, embeddings, and generation all run on your machine (Ollama + Sentence-Transformers). Nothing is sent to the cloud.
-- **Hybrid PDF ingestion** — Unstructured parsing with an automatic PyMuPDF + Tesseract OCR fallback for scanned or multilingual pages (EN/FR/AR/DE/ES).
+- **PDF ingestion with OCR fallback** — PyMuPDF text extraction, with Tesseract OCR for scanned or text-poor pages (EN/FR/AR/DE/ES). Unstructured is tried first only if it is installed with its PDF extras (`pip install "unstructured[pdf]"`); otherwise the app falls back to PyMuPDF and logs why.
 - **Semantic chunking** — paragraph-aware chunks (~800 chars) with character-level overlap so context survives chunk boundaries.
 - **Persistent vector index** — ChromaDB with HNSW + cosine distance, plus SHA-256 fingerprinting to prevent duplicate uploads.
-- **Citation-grounded answers** — every response references `[E1]…[En]` with document, page, and chunk provenance; a relevance guardrail filters low-confidence retrieval to reduce hallucination.
+- **Citation-grounded answers** — each document answer comes with a sources panel listing the exact chunks (document, page, chunk) that were given to the model; if the best match is below a cosine-distance threshold, the assistant says it could not find the answer and shows no sources.
 - **Beyond Q&A** — structured document/library summaries, MCQ quiz generation, and Markdown / PDF export.
 - **Intent-aware routing** — an LLM classifier sends small talk to chat mode and content questions to the RAG pipeline.
 - **Modern UI** — React 19 + Tailwind CSS + shadcn/ui with dark-ready design and an onboarding flow.
@@ -62,7 +62,7 @@ flowchart TB
 
     subgraph ingest["Ingestion pipeline"]
         direction LR
-        PDF["PDF documents"] --> EXT["Unstructured + Tesseract OCR"]
+        PDF["PDF documents"] --> EXT["PyMuPDF + Tesseract OCR"]
         EXT --> CHK["Paragraph-aware chunking (~800 chars, overlap)"]
         CHK --> EMB["Sentence-Transformers<br/>all-MiniLM-L6-v2"]
         EMB --> VDB[("ChromaDB<br/>cosine HNSW")]
@@ -72,7 +72,7 @@ flowchart TB
         direction LR
         Q["Your question"] --> RET["Top-k retrieval<br/>+ distance guardrail"]
         RET --> VDB
-        RET --> LLM["Ollama llama3.2"]
+        RET --> LLM["Ollama qwen2.5:3b"]
         LLM --> A["Grounded answer + citations [E1..En]"]
     end
 
@@ -82,11 +82,11 @@ flowchart TB
 
 | # | Phase | What happens |
 |---|---|---|
-| 1 | **Ingest** | A PDF is parsed by Unstructured and automatically routed to an OCR pipeline (PyMuPDF + Tesseract) if a page is scanned or weak. |
+| 1 | **Ingest** | Text is extracted with PyMuPDF; pages that are scanned or nearly empty are sent to Tesseract OCR when it is installed. (Unstructured is used first only if its PDF extras are installed.) |
 | 2 | **Chunk** | Pages are normalized and split into paragraph-aware chunks (~800 chars) with overlap, preserving meaning and page provenance. |
 | 3 | **Embed** | Chunks are embedded with `all-MiniLM-L6-v2` and upserted into a persistent ChromaDB collection. |
 | 4 | **Retrieve** | The question is embedded and matched against the index; top-`k` chunks must pass a cosine-distance guardrail. |
-| 5 | **Answer** | Ollama `llama3.2` writes a Markdown answer grounded strictly in the retrieved evidence; the UI renders clickable citations. |
+| 5 | **Answer** | Ollama `qwen2.5:3b` writes a Markdown answer grounded strictly in the retrieved evidence; the UI renders clickable citations. |
 | 6 | **Extend** | The same evidence powers summaries, MCQs, and Markdown/PDF exports. |
 
 ## Tech stack
@@ -96,8 +96,8 @@ flowchart TB
 | Backend | Python · FastAPI · Uvicorn |
 | Vector store | ChromaDB (persistent, cosine HNSW) |
 | Embeddings | Sentence-Transformers `all-MiniLM-L6-v2` |
-| LLM | Ollama — `llama3.2` (local) |
-| PDF parsing | Unstructured · PyMuPDF · Tesseract OCR · langdetect |
+| LLM | Ollama — `qwen2.5:3b` by default (any Ollama model via `OLLAMA_MODEL`) |
+| PDF parsing | PyMuPDF · Tesseract OCR (optional) · Unstructured (optional) · langdetect |
 | Frontend | React 19 · Vite · TypeScript · Tailwind CSS · shadcn/ui |
 | Export | jsPDF / ReportLab · Markdown |
 
@@ -106,13 +106,13 @@ flowchart TB
 ### Prerequisites
 
 - **Python 3.12** and **Node.js ≥ 20**
-- **Ollama** with Llama 3.2 pulled:
+- **Ollama** with the default model pulled (`qwen2.5:3b`, ~1.9 GB, fits a 4 GB GPU):
 
   ```bash
-  ollama pull llama3.2
+  ollama pull qwen2.5:3b
   ```
 
-- **Tesseract OCR** installed and on your `PATH` (only needed for scanned PDFs).
+- **Tesseract OCR** on your `PATH` (optional). Without it, scanned or image-only pages are skipped (a warning is logged) and the rest of the PDF is still indexed.
 
 ### 1. Backend
 
@@ -126,7 +126,24 @@ pip install -r ../requirements.txt
 uvicorn web_server:app --reload --port 8000
 ```
 
-The API is now live at `http://localhost:8000` — interactive docs at [`http://localhost:8000/docs`](http://localhost:8000/docs). Drop PDFs into `backend/data/` or upload them from the UI.
+Optional settings (environment variables): `OLLAMA_MODEL` (default `qwen2.5:3b`; e.g. `llama3.2` also works), `OLLAMA_URL` (default `http://localhost:11434`), `MAX_UPLOAD_MB` (default `50`), `CORS_ORIGINS` (default `http://localhost:5173,http://127.0.0.1:5173`), `TESSERACT_CMD` (path to `tesseract.exe` if it is not on `PATH`; the standard Windows install folder is detected automatically), `OCR_LANGS` (default `fra+eng`; languages that are not installed are skipped with a warning — add French by copying `fra.traineddata` into Tesseract's `tessdata` folder).
+
+The API is now live at `http://localhost:8000` — interactive docs at [`http://localhost:8000/docs`](http://localhost:8000/docs). Upload PDFs from the UI (files copied manually into `backend/data/` are not indexed until uploaded).
+
+Evaluate the pipeline end to end (needs Ollama; indexes `backend/eval/sample_pdfs/` into a temporary folder, your data is not touched):
+
+```bash
+cd backend
+python eval/run_eval.py
+```
+
+Run the tests (from the repository root):
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
 
 ### 2. Frontend
 
@@ -165,7 +182,7 @@ cd frontend && npm run lint && npm run build
 ```
 ├── .github/workflows/       # CI: frontend lint + build, backend unit tests
 ├── backend/                 # Python RAG engine + FastAPI API
-│   ├── ingest/              # Hybrid extraction (Unstructured + OCR), chunking, ingestion service
+│   ├── ingest/              # Extraction (PyMuPDF + OCR, optional Unstructured), chunking, ingestion service
 │   ├── features/            # Summaries, MCQ quiz, exports, intent router
 │   ├── scripts/             # Ollama connectivity checks
 │   ├── tests/               # Unit tests + manual integration scripts

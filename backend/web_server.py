@@ -1,43 +1,35 @@
 import logging
-import asyncio
-import shutil
 import hashlib
-from pathlib import Path
+import os
 from typing import List, Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
-# Import existing functionality (path must be set correctly by uv run/python path)
-# Assuming web_server.py is in 'PDF processing/' alongside features/ and rag_answer.py
+# Run from the backend/ folder:  uvicorn web_server:app --port 8000
+# No try/except here on purpose: if a module is missing, the server must fail
+# at startup with the real ImportError instead of serving fake "dummy" answers.
+from rag_answer import rag_answer, has_relevant_evidence
+from features.summarize import summarize_document, summarize_library
+from features.mcq_generator import generate_mcqs_for_document, generate_mcqs_for_library
+from features.router import classify_intent, chat_with_ollama
+from features.ollama_client import OllamaError
+from ingest.service import ingest_service, safe_pdf_path
 
-try:
-    from rag_answer import rag_answer
-    from features.chroma_utils import list_docs
-    from features.summarize import summarize_document, summarize_library
-    from features.mcq_generator import generate_mcqs_for_document, generate_mcqs_for_library
-    from ingest.service import ingest_service
-    from features.router import classify_intent, chat_with_ollama
-    from features.chroma_extensions import delete_document_from_chroma
-except ImportError as e:
-    logging.warning(f"Failed to import local modules: {e}. Check your python path.")
-    # Dummy imports for testing/linting purpose if path is wrong
-    def rag_answer(*args, **kwargs): return "Error: Backend not found", []
-    def list_docs(*args, **kwargs): return []
-    def summarize_document(*args, **kwargs): return {}
-    def summarize_library(*args, **kwargs): return {}
-    def generate_mcqs_for_document(*args, **kwargs): return []
-    def generate_mcqs_for_library(*args, **kwargs): return []
-    ingest_service = None
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "50"))
 
 
 # --- Data Models ---
 
 class ChatRequest(BaseModel):
-    question: str
-    doc_name: Optional[str] = None  # If None, query all docs
-    top_k: int = 5
+    question: str = Field(min_length=1, max_length=4000)
+    doc_name: Optional[str] = None          # one document (kept for compatibility)
+    doc_names: Optional[List[str]] = None   # several selected documents
+    top_k: int = Field(default=5, ge=1, le=20)
 
 class Citation(BaseModel):
     id: str  # E1, E2...
@@ -57,19 +49,14 @@ class SummaryRequest(BaseModel):
 class SummaryResponse(BaseModel):
     title: str
     markdown: str
-    # Simply list citations as objects
     citations: List[Dict[str, Any]]
 
 class QuizRequest(BaseModel):
     doc_name: Optional[str] = None
-    num_questions: int = 5
+    num_questions: int = Field(default=5, ge=1, le=20)
 
 class DocActionRequest(BaseModel):
     doc_name: str
-
-class MCQOption(BaseModel):
-    text: str
-    label: str # A, B, C, D
 
 class MCQItem(BaseModel):
     question: str
@@ -86,258 +73,232 @@ class QuizResponse(BaseModel):
 
 app = FastAPI(title="Local RAG API", version="1.0.0")
 
-# Allow CORS for local dev frontend
+# Only the local Vite dev server may call the API from a browser. With "*",
+# any website open in the same browser could call /api/delete on localhost.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For dev only
-    allow_credentials=True,
+    allow_origins=os.environ.get(
+        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(","),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+@app.exception_handler(OllamaError)
+async def ollama_error_handler(request: Request, exc: OllamaError):
+    # The LLM is unavailable: 503 + a message telling the user what to do.
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+def _validated_doc_name(doc_name: str) -> str:
+    try:
+        safe_pdf_path(doc_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return doc_name
+
+
+def build_where(doc_name: Optional[str], doc_names: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+    """Chroma metadata filter for the selected documents (None = whole library)."""
+    names = [n for n in (doc_names or []) if n]
+    if doc_name and doc_name not in names:
+        names.append(doc_name)
+    if not names:
+        return None
+    if len(names) == 1:
+        return {"doc": names[0]}
+    return {"doc": {"$in": names}}
+
+
 # --- Endpoints ---
+# Endpoints are plain `def` (not `async def`): they call blocking code
+# (embedding model, Chroma, HTTP to Ollama). FastAPI runs `def` endpoints in a
+# thread pool, so one slow LLM call no longer freezes the whole server.
 
 @app.get("/api/health")
-async def health_check():
+def health_check():
     return {"status": "ok", "service": "Local RAG Assistant"}
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
-
-# ... (rest of imports)
 
 @app.get("/api/documents")
-async def get_documents():
-    """List all indexed documents with status."""
-    try:
-        logging.info("GET /api/documents - starting")
-        # Use ingest_service registry if available for status
-        if ingest_service:
-            logging.info("ingest_service available, calling get_all_docs()")
-            docs_map = ingest_service.get_all_docs()
-            logging.info(f"Got docs_map with {len(docs_map)} documents")
-            # Convert dict to list
-            docs = list(docs_map.values())
-            logging.info(f"Returning {len(docs)} documents")
-            # If registry is empty but chromadb has docs (legacy), we might want to merge?
-            # For "Option A", we rely on registry as source of truth for UI.
-            return {"documents": docs}
-        else:
-            logging.warning("ingest_service is None, returning empty list")
-            # Fallback
-            return {"documents": []}
-    except Exception as e:
-        logging.exception(f"Error in get_documents: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+def get_documents():
+    """List all indexed documents with status (registry is the source of truth for the UI)."""
+    docs_map = ingest_service.get_all_docs()
+    return {"documents": list(docs_map.values())}
+
 
 @app.post("/api/upload")
-async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Upload a PDF file and ingest it into the RAG system in background."""
-    if not file.filename.lower().endswith(".pdf"):
+    filename = os.path.basename((file.filename or "").replace("\\", "/"))
+    if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
-    
-    if ingest_service is None:
-        raise HTTPException(status_code=503, detail="Ingest service not available on backend")
+    _validated_doc_name(filename)
 
-    filename = Path(file.filename).name
-    
-    # Compute SHA-256 Fingerprint
-    try:
-        file.file.seek(0)
-        content = file.file.read()
-        file_hash = hashlib.sha256(content).hexdigest()
-        file.file.seek(0)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to compute file hash: {e}")
+    content = file.file.read(MAX_UPLOAD_MB * 1024 * 1024 + 1)
+    if len(content) > MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"File is larger than {MAX_UPLOAD_MB} MB")
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="This file is not a valid PDF (missing %PDF header)")
 
-    # Check for existing duplicate
+    file_hash = hashlib.sha256(content).hexdigest()
+
+    # Same bytes already indexed (possibly under another name) -> skip
     existing_doc = ingest_service.get_doc_by_fingerprint(file_hash)
     if existing_doc and existing_doc.get("status") == "ready":
-         return {
-             "message": f"Document already indexed as '{existing_doc['name']}'. Skipping ingestion.",
-             "doc_name": existing_doc['name'],
-             "status": "ready"
-         }
-
-    save_path = Path("data") / filename
-    
-    # Ensure data directory exists
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    try:
-        # Save uploaded file
-        with save_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        # Register "indexing" status immediately (so UI sees it)
-        ingest_service.update_status(filename, "indexing", fingerprint=file_hash)
-
-        # Run Ingestion in Background
-        background_tasks.add_task(ingest_service.ingest_background, save_path, filename)
-        
         return {
-            "message": f"Upload accepted. Indexing '{filename}' in background.", 
-            "doc_name": filename,
-            "status": "indexing"
+            "message": f"Document already indexed as '{existing_doc['name']}'. Skipping ingestion.",
+            "doc_name": existing_doc['name'],
+            "status": "ready"
         }
-    except Exception as e:
-        logging.exception("Upload failed")
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+    current = ingest_service.get_doc(filename)
+    if current and current.get("status") == "indexing":
+        raise HTTPException(status_code=409, detail=f"'{filename}' is already being indexed. Wait for it to finish.")
+
+    save_path = safe_pdf_path(filename)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    save_path.write_bytes(content)
+
+    # Register "indexing" status immediately (so UI sees it)
+    ingest_service.update_status(filename, "indexing", fingerprint=file_hash)
+    background_tasks.add_task(ingest_service.ingest_background, save_path, filename)
+
+    return {
+        "message": f"Upload accepted. Indexing '{filename}' in background.",
+        "doc_name": filename,
+        "status": "indexing"
+    }
 
 
 @app.post("/api/delete")
-async def delete_document_endpoint(req: DocActionRequest):
+def delete_document_endpoint(req: DocActionRequest):
     """Delete a document from index and disk."""
+    doc_name = _validated_doc_name(req.doc_name)
+    if ingest_service.get_doc(doc_name) is None and not safe_pdf_path(doc_name).exists():
+        raise HTTPException(status_code=404, detail=f"Document '{doc_name}' not found")
     try:
-        if ingest_service:
-            ingest_service.delete_doc(req.doc_name)
-        else:
-            # Fallback legacy delete
-            delete_document_from_chroma(req.doc_name)
-            
-        return {"message": f"Deleted {req.doc_name}", "status": "success"}
+        ingest_service.delete_doc(doc_name)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+        logging.exception("Delete failed")
+        raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
+    return {"message": f"Deleted {doc_name}", "status": "success"}
+
 
 @app.post("/api/reindex")
-async def reindex_document_endpoint(req: DocActionRequest, background_tasks: BackgroundTasks):
-    """Re-index an existing document."""
-    try:
-        if ingest_service:
-             # We need to find the file path. 
-             # reindex_doc in service could return path or we calc it here.
-             # Let's assume standard path:
-             file_path = Path("data") / req.doc_name
-             if not file_path.exists():
-                 raise HTTPException(status_code=404, detail="File not found")
-             
-             # Set status
-             ingest_service.update_status(req.doc_name, "indexing")
-             
-             # Clear old (synchronous ok for delete)
-             ingest_service.delete_doc(req.doc_name)
-             
-             # Re-ingest background
-             background_tasks.add_task(ingest_service.ingest_background, file_path, req.doc_name)
-             
-             return {"message": f"Re-indexing {req.doc_name} started", "status": "indexing"}
-        else:
-             raise HTTPException(status_code=503, detail="Ingest service unavailable")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Re-index failed: {str(e)}")
+def reindex_document_endpoint(req: DocActionRequest, background_tasks: BackgroundTasks):
+    """
+    Re-index an existing document.
+
+    Bug fixed: this used to call delete_doc(), which also deleted the PDF from
+    disk, so the background re-ingestion always failed and the file was lost.
+    Now we keep the PDF; ingest_background() clears the old chunks itself.
+    """
+    doc_name = _validated_doc_name(req.doc_name)
+    file_path = safe_pdf_path(doc_name)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"PDF file for '{doc_name}' not found on disk")
+
+    current = ingest_service.get_doc(doc_name)
+    if current and current.get("status") == "indexing":
+        raise HTTPException(status_code=409, detail=f"'{doc_name}' is already being indexed")
+
+    ingest_service.update_status(doc_name, "indexing")
+    background_tasks.add_task(ingest_service.ingest_background, file_path, doc_name)
+    return {"message": f"Re-indexing {doc_name} started", "status": "indexing"}
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(req: ChatRequest):
-    """Answer a question using RAG."""
-    # Build 'where' filter if doc_name is provided
-    where_clause = {"doc": req.doc_name} if req.doc_name else None
+def chat_endpoint(req: ChatRequest):
+    """Route the question (CHAT vs DOC) and answer it, with RAG for DOC."""
+    where_clause = build_where(req.doc_name, req.doc_names)
 
-
-    # Determine intent
     try:
-        # If specific doc is selected, we assume DOC intent unless it's explicitly chitchat
-        # But generally if a doc is selected, user wants to query it. 
-        # However, "hello" with a doc selected should still be chat.
         intent = classify_intent(req.question)
-        
+
+        # The small LLM router sometimes labels a real document question as CHAT,
+        # which produced answers from the model's memory with no sources. If the
+        # documents clearly contain a match, we answer from them instead.
+        if intent == "CHAT" and has_relevant_evidence(req.question, where_clause):
+            intent = "DOC"
+
         if intent == "CHAT":
-             # Route to direct LLM chat
-             model = "llama3.2:latest" # Default, or make configurable
-             ans = chat_with_ollama(req.question, model=model)
-             return ChatResponse(answer=ans, citations=[])
-        
-        # Else DOC intent -> RAG
+            ans = chat_with_ollama(req.question)
+            return ChatResponse(answer=ans, citations=[])
+
+        # DOC intent -> RAG
         answer, evidence_chunks = rag_answer(
             question=req.question,
             top_k=req.top_k,
-            where=where_clause
-            # using defaults for others (ollama_model etc.)
+            where=where_clause,
         )
-
-        # Convert EvidenceChunk objects to Pydantic models
-        citations_out = []
-        for i, chunk in enumerate(evidence_chunks, start=1):
-            citations_out.append(Citation(
-                id=f"E{i}",
-                doc=chunk.doc,
-                page=chunk.page,
-                chunk_index=chunk.chunk_index,
-                text_snippet=chunk.text,
-                distance=chunk.distance
-            ))
-
-        return ChatResponse(answer=answer, citations=citations_out)
-
+    except OllamaError:
+        raise  # handled above -> 503
     except Exception as e:
         logging.exception("Error in chat_endpoint")
-        raise HTTPException(status_code=500, detail=f"RAG Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"RAG Error: {e}")
+
+    citations_out = [
+        Citation(
+            id=f"E{i}",
+            doc=chunk.doc,
+            page=chunk.page,
+            chunk_index=chunk.chunk_index,
+            text_snippet=chunk.text,
+            distance=chunk.distance,
+        )
+        for i, chunk in enumerate(evidence_chunks, start=1)
+    ]
+    return ChatResponse(answer=answer, citations=citations_out)
+
 
 @app.post("/api/summary/document", response_model=SummaryResponse)
-async def summary_document_endpoint(req: SummaryRequest):
+def summary_document_endpoint(req: SummaryRequest):
     if not req.doc_name:
         raise HTTPException(status_code=400, detail="doc_name is required for document summary")
+    res = summarize_document(doc_name=req.doc_name)
+    return SummaryResponse(title=res.title, markdown=res.markdown, citations=res.citations)
 
-    try:
-        # returns SummaryResult(title, markdown, citations)
-        res = summarize_document(doc_name=req.doc_name)
-        return SummaryResponse(
-            title=res.title,
-            markdown=res.markdown,
-            citations=res.citations
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/summary/library", response_model=SummaryResponse)
-async def summary_library_endpoint():
-    try:
-        res = summarize_library()
-        return SummaryResponse(
-            title=res.title,
-            markdown=res.markdown,
-            citations=res.citations
+def summary_library_endpoint():
+    res = summarize_library()
+    return SummaryResponse(title=res.title, markdown=res.markdown, citations=res.citations)
+
+
+def _quiz_response(mcqs) -> QuizResponse:
+    if not mcqs:
+        # Before: 200 with an empty list, which the quiz page could not display.
+        raise HTTPException(
+            status_code=502,
+            detail="The model did not return valid quiz questions (or there is no indexed text). Please try again.",
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return QuizResponse(mcqs=[
+        MCQItem(
+            question=m.question,
+            options=m.options,
+            correct_index=m.correct_index,
+            explanation=m.explanation,
+            citations=m.citations
+        ) for m in mcqs
+    ])
+
 
 @app.post("/api/quiz/document", response_model=QuizResponse)
-async def quiz_document_endpoint(req: QuizRequest):
+def quiz_document_endpoint(req: QuizRequest):
     if not req.doc_name:
         raise HTTPException(status_code=400, detail="doc_name is required")
-    try:
-        mcqs = generate_mcqs_for_document(doc_name=req.doc_name, n=req.num_questions)
-        # mcqs is list of MCQ objects
-        return QuizResponse(mcqs=[
-            MCQItem(
-                question=m.question,
-                options=m.options,
-                correct_index=m.correct_index,
-                explanation=m.explanation,
-                citations=m.citations
-            ) for m in mcqs
-        ])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return _quiz_response(generate_mcqs_for_document(doc_name=req.doc_name, n=req.num_questions))
+
 
 @app.post("/api/quiz/library", response_model=QuizResponse)
-async def quiz_library_endpoint(req: QuizRequest):
-    try:
-        mcqs = generate_mcqs_for_library(n=req.num_questions)
-        return QuizResponse(mcqs=[
-            MCQItem(
-                question=m.question,
-                options=m.options,
-                correct_index=m.correct_index,
-                explanation=m.explanation,
-                citations=m.citations
-            ) for m in mcqs
-        ])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def quiz_library_endpoint(req: QuizRequest):
+    return _quiz_response(generate_mcqs_for_library(n=req.num_questions))
 
 
 if __name__ == "__main__":
     import uvicorn
-    # Run API
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Bind to localhost only: this API has no authentication.
+    uvicorn.run(app, host="127.0.0.1", port=8000)

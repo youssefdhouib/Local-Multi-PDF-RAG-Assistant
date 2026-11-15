@@ -1,0 +1,32 @@
+{
+  "_comment": "Hand-written questions about the PDFs in sample_pdfs/. 'page' is where the answer is. 'expect_any': answer is correct if it contains at least one of these. Out-of-scope questions must be refused.",
+  "in_scope": [
+    {"q": "How tall is Olympus Mons?", "doc": "solar_system_notes.pdf", "page": 2, "expect_any": ["22"]},
+    {"q": "How long is a day on Mars?", "doc": "solar_system_notes.pdf", "page": 2, "expect_any": ["37 minutes", "24 hours"]},
+    {"q": "What are the names of the moons of Mars?", "doc": "solar_system_notes.pdf", "page": 2, "expect_any": ["Phobos"]},
+    {"q": "Why is Mars called the Red Planet?", "doc": "solar_system_notes.pdf", "page": 2, "expect_any": ["iron oxide", "rust"]},
+    {"q": "What is the Great Red Spot?", "doc": "solar_system_notes.pdf", "page": 3, "expect_any": ["storm"]},
+    {"q": "What is the largest moon in the Solar System?", "doc": "solar_system_notes.pdf", "page": 3, "expect_any": ["Ganymede"]},
+    {"q": "How long ago did the Solar System form?", "doc": "solar_system_notes.pdf", "page": 1, "expect_any": ["4.6"]},
+    {"q": "According to legend, who discovered coffee?", "doc": "coffee_history.pdf", "page": 1, "expect_any": ["Kaldi"]},
+    {"q": "Which port was the main centre of the coffee trade?", "doc": "coffee_history.pdf", "page": 2, "expect_any": ["Mocha"]},
+    {"q": "Why did Sufi monks drink coffee?", "doc": "coffee_history.pdf", "page": 2, "expect_any": ["awake"]},
+    {"q": "Who patented the first espresso machine?", "doc": "coffee_history.pdf", "page": 3, "expect_any": ["Moriondo"]},
+    {"q": "In which year was the first espresso machine patented?", "doc": "coffee_history.pdf", "page": 3, "expect_any": ["1884"]},
+    {"q": "What is the local name of Mount Etna?", "doc": "scanned_volcano_report.pdf", "page": 1, "expect_any": ["Mongibello"]},
+    {"q": "How far must visitors stay from the summit craters during eruptions?", "doc": "scanned_volcano_report.pdf", "page": 2, "expect_any": ["2 kilomet", "2 km", "two kilomet"]}
+  ],
+  "out_of_scope": [
+    "What is the population of Tokyo?",
+    "Who wrote Hamlet?",
+    "What is the capital of Australia?",
+    "How do I bake sourdough bread?",
+    "Who won the 2018 football World Cup?",
+    "What is the exact height of Mount Everest in metres?",
+    "How many moons does Saturn have?"
+  ],
+  "routing": {
+    "chat": ["hello!", "thanks, that was helpful", "what can you do?", "good morning", "who are you?"],
+    "doc": ["How tall is Olympus Mons?", "Who patented the first espresso machine?", "Compare Olympus Mons and the port of Mocha", "Explain the Great Red Spot", "What does the volcano report say about Catania?"]
+  }
+}

@@ -1,4 +1,6 @@
 from __future__ import annotations
+from functools import lru_cache
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 import chromadb
 
@@ -6,12 +8,29 @@ DEFAULT_CHROMA_DIR = "storage/chroma_db"
 DEFAULT_COLLECTION_NAME = "pdf_chunks"
 
 
+@lru_cache(maxsize=8)
+def _client_for(abs_path: str):
+    # One client per storage folder, reused across requests.
+    return chromadb.PersistentClient(path=abs_path)
+
+
 def get_collection(
     chroma_dir: str = DEFAULT_CHROMA_DIR,
     collection_name: str = DEFAULT_COLLECTION_NAME
 ):
-    client = chromadb.PersistentClient(path=chroma_dir)
-    return client.get_collection(collection_name)
+    """
+    Return the chunk collection, creating it if needed.
+
+    get_or_create (instead of get) means asking a question before the first
+    upload returns "no evidence" instead of a 500 "collection does not exist".
+    The cosine setting must match what ingestion uses, because the relevance
+    guardrail in rag_answer compares cosine distances.
+    """
+    client = _client_for(str(Path(chroma_dir).resolve()))
+    return client.get_or_create_collection(
+        name=collection_name,
+        metadata={"hnsw:space": "cosine"},
+    )
 
 
 def list_docs(

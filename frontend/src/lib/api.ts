@@ -1,5 +1,15 @@
 const API_BASE = "http://localhost:8000/api";
 
+// Read FastAPI's {"detail": ...} so the UI shows the real reason
+// (e.g. "Cannot reach Ollama ... Start it with `ollama serve`").
+async function errorFrom(res: Response, fallback: string): Promise<Error> {
+    const body = await res.json().catch(() => ({}));
+    const detail = body?.detail;
+    if (typeof detail === "string") return new Error(detail);
+    if (Array.isArray(detail) && detail[0]?.msg) return new Error(detail[0].msg);
+    return new Error(`${fallback} (HTTP ${res.status})`);
+}
+
 export interface Citation {
     id: string;
     doc: string;
@@ -52,7 +62,7 @@ export interface Document {
 
 export async function fetchDocuments(): Promise<Document[]> {
     const res = await fetch(`${API_BASE}/documents`);
-    if (!res.ok) throw new Error("Failed to fetch documents");
+    if (!res.ok) throw await errorFrom(res, "Failed to fetch documents");
     const data = await res.json();
     return data.documents; // Now returns list of objects
 }
@@ -69,10 +79,7 @@ export const uploadDocument = async (file: File): Promise<ActionResponse> => {
         method: "POST",
         body: formData,
     });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || "Upload failed");
-    }
+    if (!response.ok) throw await errorFrom(response, "Upload failed");
     return response.json();
 };
 
@@ -82,10 +89,7 @@ export async function deleteDocument(docName: string): Promise<ActionResponse> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ doc_name: docName }),
     });
-    if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Delete failed");
-    }
+    if (!res.ok) throw await errorFrom(res, "Delete failed");
     return res.json();
 }
 
@@ -95,24 +99,19 @@ export async function reindexDocument(docName: string): Promise<ActionResponse> 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ doc_name: docName }),
     });
-    if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Re-index failed");
-    }
+    if (!res.ok) throw await errorFrom(res, "Re-index failed");
     return res.json();
 }
 
 // Features
-export async function chat(question: string, docName?: string): Promise<ChatResponse> {
+// docNames: the selected documents. Empty/undefined = search the whole library.
+export async function chat(question: string, docNames?: string[]): Promise<ChatResponse> {
     const res = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, doc_name: docName }),
+        body: JSON.stringify({ question, doc_names: docNames && docNames.length > 0 ? docNames : undefined }),
     });
-    if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Chat failed");
-    }
+    if (!res.ok) throw await errorFrom(res, "Chat failed");
     return res.json();
 }
 
@@ -122,7 +121,7 @@ export async function summarizeDocument(docName: string): Promise<SummaryRespons
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ doc_name: docName }),
     });
-    if (!res.ok) throw new Error("Summarize failed");
+    if (!res.ok) throw await errorFrom(res, "Summarize failed");
     return res.json();
 }
 
@@ -132,7 +131,7 @@ export async function summarizeLibrary(): Promise<SummaryResponse> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
     });
-    if (!res.ok) throw new Error("Summarize failed");
+    if (!res.ok) throw await errorFrom(res, "Summarize failed");
     return res.json();
 }
 
@@ -146,6 +145,6 @@ export async function generateQuiz(docName?: string, numQuestions: number = 5): 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error("Quiz generation failed");
+    if (!res.ok) throw await errorFrom(res, "Quiz generation failed");
     return res.json();
 }

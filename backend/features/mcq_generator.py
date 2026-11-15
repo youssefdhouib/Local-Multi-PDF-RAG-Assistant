@@ -3,12 +3,12 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Tuple, Optional
 import json
 import re
-import requests
 
+from features import ollama_client
 from features.chroma_utils import fetch_doc_chunks, fetch_library_sample
 
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "llama3.2"
+DEFAULT_OLLAMA_URL = ollama_client.OLLAMA_URL
+DEFAULT_OLLAMA_MODEL = ollama_client.OLLAMA_MODEL
 
 
 @dataclass
@@ -21,21 +21,18 @@ class MCQ:
 
 
 def ollama_generate(prompt: str, system: str, model: str, ollama_url: str, temperature: float = 0.2) -> str:
-    endpoint = ollama_url.rstrip("/") + "/api/generate"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "system": system,  # Stronger instruction adherence
-        "stream": False,
-        "format": "json",
-        "options": {
-            "temperature": temperature,
-            "num_ctx": 4096, # Reduce context window to force focus
-        },
-    }
-    r = requests.post(endpoint, json=payload, timeout=300)
-    r.raise_for_status()
-    return r.json().get("response", "").strip()
+    # format=json asks Ollama for valid JSON; num_ctx keeps the context small.
+    # Raises ollama_client.OllamaError (-> HTTP 503) if Ollama is unavailable.
+    return ollama_client.generate(
+        prompt,
+        model=model,
+        system=system,
+        temperature=temperature,
+        timeout=300,
+        json_format=True,
+        extra_options={"num_ctx": 4096},
+        ollama_url=ollama_url,
+    )
 
 
 def format_evidence(
@@ -77,7 +74,7 @@ Strict Rules:
 1. Output MUST be a valid JSON object {"mcqs": [...]}. 
 2. Do not include any text outside the JSON.
 3. Generate valid questions based strictly on the provided text.
-4. If the text is in French, generate questions in French."""
+4. Write the questions in the same language as the TEXT (English text -> English questions, French text -> French questions)."""
 
     user_prompt = f"""Generate {n} multiple-choice questions (MCQs) based on this text:
 
@@ -237,7 +234,9 @@ def generate_mcqs_for_document(
                 return res
             else:
                 print("DEBUG: Normalization resulted in 0 valid MCQs.")
-                
+
+        except ollama_client.OllamaError:
+            raise  # Ollama is down / model missing: retrying won't help, report it.
         except Exception as e:
             print(f"Attempt {attempt} failed with error: {e}")
             
@@ -277,6 +276,8 @@ def generate_mcqs_for_library(
         res = _normalize_mcqs(raw_json, evidence_map)
         print(f"DEBUG: Library Normalized MCQs: {len(res)}")
         return res
+    except ollama_client.OllamaError:
+        raise
     except Exception as e:
         print(f"DEBUG: Library generation failed: {e}")
         return []
