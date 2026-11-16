@@ -66,7 +66,8 @@ def ask(client, question, **extra):
 
 # ---------- search path ----------
 
-def test_same_parameters_as_the_other_engines():
+def test_same_parameters_as_the_other_engines(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # importing the app creates storage/ in the current folder
     from rag_answer import rag_answer
     from graph_rag import graph_answer
     assert inspect.signature(graph_answer).parameters.keys() == inspect.signature(rag_answer).parameters.keys()

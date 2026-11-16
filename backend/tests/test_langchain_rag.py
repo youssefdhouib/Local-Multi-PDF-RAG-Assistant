@@ -39,7 +39,8 @@ def ask(client, question, **extra):
     return r.json()
 
 
-def test_same_parameters_as_classic_rag_answer():
+def test_same_parameters_as_classic_rag_answer(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # importing the app creates storage/ in the current folder
     from rag_answer import rag_answer
     from langchain_rag import langchain_rag_answer
     assert inspect.signature(langchain_rag_answer).parameters.keys() == inspect.signature(rag_answer).parameters.keys()

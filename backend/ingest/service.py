@@ -40,9 +40,11 @@ def safe_pdf_path(doc_name: str) -> Path:
     Map a document name to its file inside DATA_DIR.
 
     Rejects names like "../web_server.py" so an API call can never read or
-    delete a file outside the data folder.
+    delete a file outside the data folder. Both "/" and "\\" are refused on
+    every OS: on Linux "\\" is not a path separator, so Path(...).name alone
+    would accept "..\\secret.pdf" there.
     """
-    if not doc_name or Path(doc_name).name != doc_name or doc_name in (".", ".."):
+    if not doc_name or "/" in doc_name or "\\" in doc_name or doc_name in (".", ".."):
         raise ValueError(f"Invalid document name: {doc_name!r}")
     if not doc_name.lower().endswith(".pdf"):
         raise ValueError(f"Invalid document name (must end with .pdf): {doc_name!r}")
