@@ -25,11 +25,12 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "50"))
 
 # Which document Q&A pipeline answers /api/chat:
-#   langchain = built with LangChain components (langchain_rag.py), the default
+#   langgraph = LangGraph workflow with tool calling and one retrieval retry (graph_rag.py), the default:
+#               it refused every off-topic question in the evaluation (see README)
+#   langchain = built with LangChain components (langchain_rag.py); faster, no relevance check
 #   classic   = same rules, hand-written pipeline (rag_answer.py); kept for rollback and comparison
-#   langgraph = LangGraph workflow with tool calling and one retrieval retry (graph_rag.py)
 RAG_ENGINES = {"classic": rag_answer, "langchain": langchain_rag_answer, "langgraph": graph_answer}
-DEFAULT_RAG_ENGINE = "langchain"
+DEFAULT_RAG_ENGINE = "langgraph"
 RAG_ENGINE = os.environ.get("RAG_ENGINE", DEFAULT_RAG_ENGINE)
 if RAG_ENGINE not in RAG_ENGINES:
     raise ValueError(f"RAG_ENGINE must be one of {list(RAG_ENGINES)}, got {RAG_ENGINE!r}")

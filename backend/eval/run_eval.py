@@ -2,9 +2,9 @@
 Small end-to-end evaluation of the RAG pipeline (real embeddings, real Chroma, real Ollama).
 
     cd backend
-    python eval/run_eval.py                       # LangChain engine (default)
+    python eval/run_eval.py                       # LangGraph workflow (default: tool calling + one retry)
+    RAG_ENGINE=langchain python eval/run_eval.py  # LangChain engine
     RAG_ENGINE=classic python eval/run_eval.py    # classic engine, for comparison
-    RAG_ENGINE=langgraph python eval/run_eval.py  # LangGraph workflow (tool calling + one retry)
 
 Uses OLLAMA_MODEL (default qwen2.5:3b) and the same RAG_ENGINE switch as the API.
 

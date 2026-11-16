@@ -41,7 +41,7 @@ https://github.com/user-attachments/assets/a82f5971-6bf9-49f5-a149-bcdba270d237
 | 📄 **Any PDF, even scanned** | PyMuPDF extraction with a Tesseract OCR fallback for scanned or image-only pages. Paragraph-aware chunks (~800 characters, with overlap) keep the page of every passage. Duplicate uploads are detected with a SHA-256 fingerprint. |
 | 📌 **Answers with sources** | Every document answer lists the passages given to the model: document name, page and the quoted text. |
 | 🙅 **No guessing** | If no passage is close enough (cosine distance above 0.75), or the LangGraph relevance check says the evidence does not contain the answer, the assistant refuses and shows no sources. |
-| 🧭 **Three Q&A engines** | `langchain` (default, LCEL chain), `classic` (hand-written pipeline, kept for rollback) and `langgraph` (tool calling + one bounded retry). One setting switches between them; the API and UI stay the same. |
+| 🧭 **Three Q&A engines** | `langgraph` (default: tool calling + a relevance check + one bounded retry), `langchain` (LCEL chain, faster) and `classic` (hand-written pipeline, kept for rollback). One setting switches between them; the API and UI stay the same. |
 | 📝 **Summaries** | Structured summary of one document or the whole library, with citations; copy as Markdown, print, or download as PDF. |
 | 🎓 **Quizzes** | Multiple-choice questions generated from a document, with explanations and the source page; export the results as PDF. |
 | 🗂️ **Document library** | Upload, select, re-index and delete PDFs; select documents to limit chat to them. |
@@ -80,9 +80,9 @@ flowchart LR
         API["REST API /api/*"]
         ING["Ingestion service<br/>extract → chunk → embed"]
         ENG{"RAG_ENGINE"}
-        LC["langchain<br/>(default)"]
+        LC["langchain"]
         CL["classic"]
-        LG["langgraph"]
+        LG["langgraph<br/>(default)"]
         FT["Summaries · Quiz · Exports"]
     end
 
@@ -126,18 +126,18 @@ flowchart LR
 
 Document Q&A runs on one of three interchangeable pipelines, chosen with `RAG_ENGINE`. All three return the same answer + sources shape, so the API and the UI do not change.
 
-| | `classic` ([`rag_answer.py`](backend/rag_answer.py)) | `langchain` ([`langchain_rag.py`](backend/langchain_rag.py)), default | `langgraph` ([`graph_rag.py`](backend/graph_rag.py)) |
+| | `classic` ([`rag_answer.py`](backend/rag_answer.py)) | `langchain` ([`langchain_rag.py`](backend/langchain_rag.py)) | `langgraph` ([`graph_rag.py`](backend/graph_rag.py)), default |
 |---|---|---|---|
 | Retrieval | direct ChromaDB query | LangChain `Chroma` store on the **same index** | same as `langchain`, keeps the UI document filter |
 | LLM call | HTTP to Ollama `/api/generate` | `ChatOllama` in an LCEL chain: `prompt \| llm \| StrOutputParser()` | `ChatOllama.bind_tools` picks a tool, then the same LCEL answer chain |
 | Relevance rules | shared `select_evidence()` | shared `select_evidence()` | `select_evidence()` + an LLM yes/no relevance check |
 | Extra | — | prompt templates, swappable components, fake models for tests | summary and quiz as tools, one retry with a rewritten query |
 
-LangChain does not make answers more accurate by itself; it gives standard, swappable building blocks. To roll back, start the API with `RAG_ENGINE=classic`. Summaries, quizzes and intent routing use the classic code in every mode.
+LangChain does not make answers more accurate by itself; it gives standard, swappable building blocks. To switch engine, start the API with `RAG_ENGINE=langchain` or `RAG_ENGINE=classic`. Summaries and quizzes use the same code in every mode; with `langgraph` the graph also replaces the small-talk / document intent router.
 
 ### LangGraph workflow (tool calling + one retry)
 
-`RAG_ENGINE=langgraph` answers `/api/chat` with one small LangGraph `StateGraph`. The model makes **one** tool choice; the graph then checks the evidence and may search **once more** with a rewritten query before refusing:
+The default engine (`RAG_ENGINE=langgraph`) answers `/api/chat` with one small LangGraph `StateGraph`. The model makes **one** tool choice; the graph then checks the evidence and may search **once more** with a rewritten query before refusing:
 
 ```mermaid
 flowchart TD
@@ -170,7 +170,7 @@ No memory, no agent loop, no multi-agent: one decision, one bounded retry. The d
 
 `backend/eval/run_eval.py` indexes the sample PDFs into a temporary folder and asks the same questions to each engine (`qwen2.5:3b`, 2 runs per engine):
 
-| | classic | langchain (default) | langgraph |
+| | classic | langchain | langgraph (default) |
 |---|---|---|---|
 | Answer accuracy (14 in-scope) | 14, 14 | 13, 14 | 13, 13 |
 | False refusals | 0, 0 | 0, 0 | 1, 1 |
@@ -180,7 +180,7 @@ No memory, no agent loop, no multi-agent: one decision, one bounded retry. The d
 | Tool choice (14, after safety check) | – | – | 13, 13 |
 | Avg latency (in-scope) | 1.7 s, 1.6 s | 1.9 s, 2.0 s | 4.0 s, 3.6 s |
 
-What this shows, honestly: the relevance check stops answers built from the wrong evidence (e.g. "How many moons does Saturn have?" answered from the Jupiter page, or a Venus temperature taken from the model's memory), which classic and langchain still do (Saturn in every run). The cost is about 2 s more per answer and one recurring false refusal ("What are the names of the moons of Mars?"). The one retry ran (mostly on off-topic questions) but did not rescue any answer in these runs: the relevance check is what made the difference. An answer counts as a refusal only if it starts with one (first 150 characters). With small sample sizes (14 / 11 questions) these numbers show a direction, not a guarantee. `langchain` stays the default.
+What this shows, honestly: the relevance check stops answers built from the wrong evidence (e.g. "How many moons does Saturn have?" answered from the Jupiter page, or a Venus temperature taken from the model's memory), which classic and langchain still do (Saturn in every run). The cost is about 2 s more per answer and one recurring false refusal ("What are the names of the moons of Mars?"). The one retry ran (mostly on off-topic questions) but did not rescue any answer in these runs: the relevance check is what made the difference. An answer counts as a refusal only if it starts with one (first 150 characters). With small sample sizes (14 / 11 questions) these numbers show a direction, not a guarantee. For a document assistant, not inventing answers matters more than 2 seconds, so `langgraph` is the default; `langchain` stays one setting away when speed matters more.
 
 ## 🚀 Getting started
 
@@ -227,7 +227,7 @@ pytest                                         # 63 unit tests, no Ollama or GPU
 
 cd backend
 python eval/run_eval.py                        # end-to-end evaluation (needs Ollama), default engine
-RAG_ENGINE=langgraph python eval/run_eval.py   # or classic
+RAG_ENGINE=langchain python eval/run_eval.py   # or classic
 
 cd ../frontend && npm run lint && npm run build
 ```
@@ -240,7 +240,7 @@ All settings are optional environment variables for the backend:
 
 | Variable | Default | Description |
 |---|---|---|
-| `RAG_ENGINE` | `langchain` | Q&A engine: `langchain`, `classic` (rollback) or `langgraph` (tool calling + one retry) |
+| `RAG_ENGINE` | `langgraph` | Q&A engine: `langgraph` (tool calling + one retry), `langchain` (faster) or `classic` (rollback) |
 | `OLLAMA_MODEL` | `qwen2.5:3b` | Any Ollama model, e.g. `llama3.2` |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server |
 | `MAX_UPLOAD_MB` | `50` | Maximum PDF size |
@@ -274,8 +274,8 @@ All settings are optional environment variables for the backend:
 │   ├── tests/               # Unit tests + manual integration scripts
 │   ├── eval/                # End-to-end evaluation (sample PDFs + questions)
 │   ├── rag_answer.py        # Classic pipeline + shared relevance rules
-│   ├── langchain_rag.py     # LangChain pipeline (default engine)
-│   ├── graph_rag.py         # LangGraph workflow: tool calling + one retry
+│   ├── langchain_rag.py     # LangChain pipeline
+│   ├── graph_rag.py         # LangGraph workflow: tool calling + one retry (default engine)
 │   └── web_server.py        # FastAPI application (the API layer)
 ├── frontend/                # React + Vite + TypeScript + Tailwind + shadcn/ui
 │   └── src/

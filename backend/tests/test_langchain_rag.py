@@ -114,9 +114,9 @@ def test_health_reports_the_active_engine(lc):
     assert lc["client"].get("/api/health").json()["rag_engine"] == "langchain"
 
 
-@pytest.mark.parametrize("env_value, expected", [(None, "langchain"), ("classic", "classic"), ("langchain", "langchain")])
+@pytest.mark.parametrize("env_value, expected", [(None, "langgraph"), ("classic", "classic"), ("langchain", "langchain")])
 def test_rag_engine_setting_at_startup(tmp_path, env_value, expected):
-    """Starts a fresh Python process, like the real server: default is langchain, classic stays available."""
+    """Starts a fresh Python process, like the real server: default is langgraph, the others stay available."""
     import os
     import subprocess
     import sys

@@ -2,8 +2,8 @@
 LangChain version of the document Q&A pipeline (Phase 4).
 
 Same inputs and outputs as rag_answer.rag_answer(), so the API and the React
-app do not change. This is the default engine; RAG_ENGINE=classic switches back
-to the hand-written pipeline (rollback / comparison).
+app do not change. Select it with RAG_ENGINE=langchain (the default is langgraph);
+RAG_ENGINE=classic switches to the hand-written pipeline (rollback / comparison).
 
 What LangChain does here:
   - Chroma vector store  -> reads the EXISTING index (no re-upload)
