@@ -23,10 +23,27 @@
     "How do I bake sourdough bread?",
     "Who won the 2018 football World Cup?",
     "What is the exact height of Mount Everest in metres?",
-    "How many moons does Saturn have?"
+    "How many moons does Saturn have?",
+    "How long is a day on Jupiter?",
+    "What is the surface temperature of Venus?",
+    "When did Mount Vesuvius last erupt?",
+    "Who invented the cappuccino?"
+  ],
+  "_comment_paraphrased": "In-scope questions written on purpose with OTHER words than the PDFs, to test the LangGraph retry (query rewrite).",
+  "paraphrased": [
+    {"q": "Which mountain on the red planet is the highest?", "doc": "solar_system_notes.pdf", "page": 2, "expect_any": ["Olympus"]},
+    {"q": "In the old Ethiopian story, what made the goats so lively?", "doc": "coffee_history.pdf", "page": 1, "expect_any": ["berr"]},
+    {"q": "Which Italian received the earliest patent for a device that brews coffee with steam?", "doc": "coffee_history.pdf", "page": 3, "expect_any": ["Moriondo"]}
   ],
   "routing": {
     "chat": ["hello!", "thanks, that was helpful", "what can you do?", "good morning", "who are you?"],
     "doc": ["How tall is Olympus Mons?", "Who patented the first espresso machine?", "Compare Olympus Mons and the port of Mocha", "Explain the Great Red Spot", "What does the volcano report say about Catania?"]
-  }
+  },
+  "_comment_tools": "LangGraph engine only: the tool the model should pick. Routing questions above count too (chat -> none, doc -> search_documents).",
+  "tools": [
+    {"q": "Summarize coffee_history.pdf", "tool": "summarize_document"},
+    {"q": "Give me an overview of the solar system notes", "tool": "summarize_document"},
+    {"q": "Quiz me on coffee_history.pdf", "tool": "generate_quiz"},
+    {"q": "Make a 3-question test about the volcano report", "tool": "generate_quiz"}
+  ]
 }

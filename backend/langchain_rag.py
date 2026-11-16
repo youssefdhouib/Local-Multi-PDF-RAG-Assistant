@@ -112,11 +112,23 @@ def langchain_rag_answer(
     if refusal:
         return refusal, []  # the LLM is not called at all
 
+    return generate_answer(question, evidence_used, is_summary, ollama_model, ollama_url), evidence_used
+
+
+def generate_answer(question: str, evidence_used: List[EvidenceChunk], is_summary: bool,
+                    ollama_model: str, ollama_url: str) -> str:
+    """The LCEL chain: prompt | llm | parser. Also used by the LangGraph engine."""
     prompt = SUMMARY_PROMPT if is_summary else ANSWER_PROMPT
     chain = prompt | get_chat_model(ollama_model, ollama_url) | StrOutputParser()
+    answer = invoke_llm(chain, {"question": question, "context": _format_evidence(evidence_used)},
+                        ollama_model, ollama_url)
+    return answer.strip()
 
+
+def invoke_llm(runnable, inputs, ollama_model: str, ollama_url: str):
+    """runnable.invoke(inputs), with Ollama problems turned into OllamaError (-> HTTP 503)."""
     try:
-        answer = chain.invoke({"question": question, "context": _format_evidence(evidence_used)})
+        return runnable.invoke(inputs)
     except (httpx.ConnectError, ConnectionError):
         raise OllamaError(f"Cannot reach Ollama at {ollama_url}. Start it with `ollama serve` and try again.")
     except httpx.TimeoutException:
@@ -125,5 +137,3 @@ def langchain_rag_answer(
         if e.status_code == 404:
             raise OllamaError(f"Model '{ollama_model}' is not available in Ollama. Run `ollama pull {ollama_model}`.")
         raise OllamaError(f"Ollama returned an error: {e}")
-
-    return answer.strip(), evidence_used

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 # at startup with the real ImportError instead of serving fake "dummy" answers.
 from rag_answer import rag_answer, has_relevant_evidence
 from langchain_rag import langchain_rag_answer
+from graph_rag import graph_answer
 from features.summarize import summarize_document, summarize_library
 from features.mcq_generator import generate_mcqs_for_document, generate_mcqs_for_library
 from features.router import classify_intent, chat_with_ollama
@@ -26,7 +27,8 @@ MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "50"))
 # Which document Q&A pipeline answers /api/chat:
 #   langchain = built with LangChain components (langchain_rag.py), the default
 #   classic   = same rules, hand-written pipeline (rag_answer.py); kept for rollback and comparison
-RAG_ENGINES = {"classic": rag_answer, "langchain": langchain_rag_answer}
+#   langgraph = LangGraph workflow with tool calling and one retrieval retry (graph_rag.py)
+RAG_ENGINES = {"classic": rag_answer, "langchain": langchain_rag_answer, "langgraph": graph_answer}
 DEFAULT_RAG_ENGINE = "langchain"
 RAG_ENGINE = os.environ.get("RAG_ENGINE", DEFAULT_RAG_ENGINE)
 if RAG_ENGINE not in RAG_ENGINES:
@@ -47,7 +49,7 @@ class Citation(BaseModel):
     page: int
     chunk_index: int
     text_snippet: Optional[str] = None
-    distance: float
+    distance: Optional[float] = None  # None for summary/quiz sources (not found by a search)
 
 class ChatResponse(BaseModel):
     answer: str
@@ -226,6 +228,11 @@ def chat_endpoint(req: ChatRequest):
     where_clause = build_where(req.doc_name, req.doc_names)
 
     try:
+        if RAG_ENGINE == "langgraph":
+            # The graph does its own routing (tool choice + safety check): no CHAT/DOC router here.
+            answer, evidence_chunks = graph_answer(question=req.question, top_k=req.top_k, where=where_clause)
+            return ChatResponse(answer=answer, citations=_citations(evidence_chunks))
+
         intent = classify_intent(req.question)
 
         # The small LLM router sometimes labels a real document question as CHAT,
@@ -250,7 +257,11 @@ def chat_endpoint(req: ChatRequest):
         logging.exception("Error in chat_endpoint")
         raise HTTPException(status_code=500, detail=f"RAG Error: {e}")
 
-    citations_out = [
+    return ChatResponse(answer=answer, citations=_citations(evidence_chunks))
+
+
+def _citations(evidence_chunks) -> List[Citation]:
+    return [
         Citation(
             id=f"E{i}",
             doc=chunk.doc,
@@ -261,7 +272,6 @@ def chat_endpoint(req: ChatRequest):
         )
         for i, chunk in enumerate(evidence_chunks, start=1)
     ]
-    return ChatResponse(answer=answer, citations=citations_out)
 
 
 @app.post("/api/summary/document", response_model=SummaryResponse)

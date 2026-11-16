@@ -33,7 +33,7 @@ class EvidenceChunk:
     page: int
     chunk_index: int
     text: str
-    distance: float
+    distance: Optional[float]  # None for summary/quiz sources (not found by a search)
 
 
 def _format_evidence(chunks: List[EvidenceChunk]) -> str:
