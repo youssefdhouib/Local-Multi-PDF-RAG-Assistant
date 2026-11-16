@@ -20,3 +20,5 @@
 *.svg binary
 *.bin binary
 *.sqlite3 binary
+*.mp4 binary
+*.webp binary
