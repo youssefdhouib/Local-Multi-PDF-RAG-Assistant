@@ -29,8 +29,6 @@ When the answer is not in your documents, it says so instead of guessing.
 
 <div align="center">
 
-<video src="https://github.com/youssefdhouib/Local-Multi-PDF-RAG-Assistant/raw/docs/readme-refresh/docs/demo.mp4" controls muted width="100%"></video>
-
 <a href="docs/demo.mp4"><img src="docs/screenshots/demo_thumbnail.png" alt="Watch the 78-second demo" width="100%" /></a>
 
 <sub>78 seconds, real app and real answers: onboarding → upload → chat with sources → French question → honest refusal → summary → quiz → the LangGraph workflow.</sub>
