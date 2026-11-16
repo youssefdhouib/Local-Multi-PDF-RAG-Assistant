@@ -27,14 +27,10 @@ When the answer is not in your documents, it says so instead of guessing.
 
 ## 🎬 Demo
 
+https://github.com/user-attachments/assets/8c89bca1-3863-4b03-a8ec-0205fd23273c
+
 <div align="center">
-
-<a href="docs/demo.mp4"><img src="docs/screenshots/demo_thumbnail.png" alt="Watch the 78-second demo" width="100%" /></a>
-
-<sub>78 seconds, real app and real answers: onboarding → upload → chat with sources → French question → honest refusal → summary → quiz → the LangGraph workflow.</sub>
-
-<img src="docs/demo_preview.gif" alt="Asking a question and opening its sources" width="80%" />
-
+<sub>78 seconds, real app and real answers: onboarding → upload → chat with sources → French question → honest refusal → summary → quiz → the LangGraph workflow. Also available as <a href="docs/demo.mp4"><code>docs/demo.mp4</code></a>.</sub>
 </div>
 
 ## ✨ Features
