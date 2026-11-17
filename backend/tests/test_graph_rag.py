@@ -51,7 +51,7 @@ def lg(env, monkeypatch):
     monkeypatch.setattr(langchain_rag, "get_chat_model", lambda m, u: FakeListChatModel(responses=["LG ANSWER"]))
     monkeypatch.setattr(graph_rag, "retrieve_with_langchain", recording_retrieve)
     monkeypatch.setattr(graph_rag, "generate_answer", recording_generate)
-    return {**env, "rec": rec}
+    return {**env, "rec": rec, "monkeypatch": monkeypatch}
 
 
 def model_calls_tool(lg, name, **args):
@@ -192,16 +192,26 @@ def tools(lg, monkeypatch):
 
 
 def test_summary_tool_calls_the_existing_summary(tools):
-    model_calls_tool(tools, "summarize_document", doc_name="bio")  # name without .pdf is accepted
+    model_calls_tool(tools, "get_summary", doc_name="bio")  # name without .pdf is accepted
     body = ask(tools["client"], "Summarize bio")
     assert tools["rec"]["summaries"] == ["bio.pdf"]
     assert body["answer"].startswith("# Summary")
     assert [(c["page"], c["distance"]) for c in body["citations"]] == [(1, None)], "only the cited chunk [E1]"
 
 
+def test_summary_without_markers_keeps_its_sources(tools, monkeypatch):
+    import graph_rag
+    from features.summarize import SummaryResult
+    cits = [{"evidence_id": "E1", "doc": "bio.pdf", "page": 1, "chunk_index": 0}]
+    monkeypatch.setattr(graph_rag, "summarize_document",
+                        lambda doc, model, ollama_url: SummaryResult(title="t", markdown="# Summary\nNo markers.", citations=cits))
+    model_calls_tool(tools, "get_summary", doc_name="bio.pdf")
+    assert [c["page"] for c in ask(tools["client"], "What is this document about?")["citations"]] == [1]
+
+
 @pytest.mark.parametrize("doc_name, selection", [("history.pdf", None), ("bio.pdf", ["ocean.pdf"])])
 def test_unknown_or_unselected_document_is_not_used(tools, doc_name, selection):
-    model_calls_tool(tools, "summarize_document", doc_name=doc_name)
+    model_calls_tool(tools, "get_summary", doc_name=doc_name)
     extra = {"doc_names": selection} if selection else {}
     body = ask(tools["client"], f"Summarize {doc_name}", **extra)
     assert "I can only use these documents" in body["answer"] and body["citations"] == []
@@ -215,6 +225,25 @@ def test_quiz_tool_limits_questions_and_returns_markdown(tools):
     assert "**1. What do plants make?**" in body["answer"] and "### Answers" in body["answer"]
     assert body["answer"].index("### Answers") > body["answer"].index("- D) Rock"), "answers at the end"
     assert body["citations"][0]["doc"] == "bio.pdf"
+
+
+def test_selected_documents_are_named_in_the_prompt(lg):
+    """With a UI selection, the model is told that "this book" / "this PDF" means the selected file."""
+    import graph_rag
+    from langchain_core.runnables import RunnableLambda
+    seen = []
+
+    def fake_tool_model(messages):
+        seen.append(messages[0].content)
+        return AIMessage(content="Hello!")
+
+    lg["monkeypatch"].setattr(graph_rag, "get_tool_model", lambda m, u: RunnableLambda(fake_tool_model))
+    upload(lg["client"], "bio.pdf", make_pdf([PHOTO]))
+    upload(lg["client"], "ocean.pdf", make_pdf([OCEAN]))
+    ask(lg["client"], "hello", doc_names=["bio.pdf"])
+    ask(lg["client"], "hello")
+    assert 'selected these documents in the app: bio.pdf. "This document", "this book"' in seen[0]
+    assert "selected these documents" not in seen[1], "no selection -> no extra sentence"
 
 
 def test_unknown_tool_name_goes_to_the_safety_check(tools):

@@ -7,7 +7,7 @@ One StateGraph, one LLM tool-selection step, at most one retrieval retry:
                |                                 ^               |--not relevant, retry unused--> rewrite_query --+
                |                                 +-------------------------------------------------------------------+
                |                                                 +--not relevant, retry used--> refuse -> END
-               |--summarize_document--> run_summary -> END
+               |--get_summary---------> run_summary -> END
                |--generate_quiz-------> run_quiz -> END
                +--no tool call--------> safety_check --documents match--> run_search
                                                      +--no match--> END (the model's own short reply, no sources)
@@ -61,10 +61,12 @@ def search_tool(query: str) -> str:
     """
 
 
-@tool("summarize_document")
+# Named get_summary (not summarize_document): with qwen2.5:3b, Ollama returned an empty reply
+# (no tool call, no text) for every summary request under the old name and description.
+@tool("get_summary")
 def summary_tool(doc_name: str) -> str:
-    """Write a summary of ONE whole document. Use it ONLY when the user explicitly asks
-    for a summary or an overview of a document.
+    """Summarize ONE whole document. Use it when the user asks for a summary, an overview,
+    or what a document is about.
 
     Args:
         doc_name: exact file name of the document, from the list of available documents.
@@ -86,9 +88,11 @@ TOOLS = [search_tool, summary_tool, quiz_tool]
 
 SYSTEM_PROMPT = """You are the assistant of a PDF library. Available documents: {docs}.
 You do NOT know what is inside these documents. Never answer a factual question from memory: call search_documents.
-Call summarize_document only if the user explicitly asks for a summary or an overview of a document.
+Call get_summary when the user asks for a summary, an overview, or what a document is about.
 Call generate_quiz only if the user explicitly asks for a quiz, a test or practice questions.
 For greetings or small talk (hello, thanks, who are you), answer in one short sentence without a tool."""
+SELECTED_PROMPT = """
+The user selected these documents in the app: {docs}. "This document", "this book", "this PDF" or "it" means them."""
 
 GRADE_PROMPT = ChatPromptTemplate.from_messages([
     ("system", "You check search results."),
@@ -167,7 +171,10 @@ def choose_tool(state: GraphState) -> GraphState:
     """The only tool-selection step: the model picks one tool, or answers small talk directly."""
     s = state["settings"]
     docs = ", ".join(allowed_docs(state.get("where"))) or "(none)"
-    messages = [SystemMessage(SYSTEM_PROMPT.format(docs=docs)), HumanMessage(state["question"])]
+    prompt = SYSTEM_PROMPT.format(docs=docs)
+    if state.get("where"):  # the user selected documents in the UI: "this book" / "this PDF" means them
+        prompt += SELECTED_PROMPT.format(docs=docs)
+    messages = [SystemMessage(prompt), HumanMessage(state["question"])]
     reply = invoke_llm(get_tool_model(s["ollama_model"], s["ollama_url"]), messages, s["ollama_model"], s["ollama_url"])
     if reply.tool_calls:
         call = reply.tool_calls[0]  # one tool per question: keep the first call
@@ -232,6 +239,8 @@ def run_summary(state: GraphState) -> GraphState:
     s = state["settings"]
     result = summarize_document(doc, model=s["ollama_model"], ollama_url=s["ollama_url"])
     cited = [c for c in result.citations if f"[{c['evidence_id']}]" in result.markdown]
+    if not cited:  # the model sometimes writes no [E#] markers: show the passages the summary was built from
+        cited = result.citations
     return {"answer": result.markdown, "sources": [_source(c, "Used in the summary") for c in cited],
             "steps": [f"run_summary:{doc}"]}
 
@@ -273,7 +282,7 @@ def run_quiz(state: GraphState) -> GraphState:
 # --- Routing (conditional edges) ------------------------------------------------
 
 def route_tool(state: GraphState) -> str:
-    nodes = {"search_documents": "run_search", "summarize_document": "run_summary", "generate_quiz": "run_quiz"}
+    nodes = {"search_documents": "run_search", "get_summary": "run_summary", "generate_quiz": "run_quiz"}
     return nodes.get(state.get("tool_name"), "safety_check")  # no tool (or an unknown one) -> safety check
 
 

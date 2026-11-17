@@ -143,7 +143,7 @@ The default engine (`RAG_ENGINE=langgraph`) answers `/api/chat` with one small L
 flowchart TD
     S([start]) --> C[choose_tool<br/>LLM picks a tool]
     C -- search_documents --> R[run_search]
-    C -- summarize_document --> SU[run_summary] --> E([end])
+    C -- get_summary --> SU[run_summary] --> E([end])
     C -- generate_quiz --> QZ[run_quiz] --> E
     C -- no tool --> SC{safety_check<br/>documents match?}
     SC -- yes --> R
@@ -156,7 +156,7 @@ flowchart TD
 
 | Step | What it does | Reuses |
 |---|---|---|
-| `choose_tool` | `ChatOllama.bind_tools` with 3 tools: `search_documents` (default for facts), `summarize_document`, `generate_quiz` | — |
+| `choose_tool` | `ChatOllama.bind_tools` with 3 tools: `search_documents` (default for facts), `get_summary`, `generate_quiz`; when documents are selected in the UI, the prompt says that "this document" means them | — |
 | `safety_check` | if the model answered without a tool but the documents clearly match, search anyway | `has_relevant_evidence()` |
 | `run_search` | top-k chunks with the user's document filter (the model never sets the filter) | `retrieve_with_langchain()`, `select_evidence()` |
 | `check_relevance` | no chunk under the distance threshold → not relevant (no LLM call); otherwise one small yes/no LLM check "does the evidence contain the answer?" (only a clear "no" rejects) | — |
@@ -181,6 +181,8 @@ No memory, no agent loop, no multi-agent: one decision, one bounded retry. The d
 | Avg latency (in-scope) | 1.7 s, 1.6 s | 1.9 s, 2.0 s | 4.0 s, 3.6 s |
 
 What this shows, honestly: the relevance check stops answers built from the wrong evidence (e.g. "How many moons does Saturn have?" answered from the Jupiter page, or a Venus temperature taken from the model's memory), which classic and langchain still do (Saturn in every run). The cost is about 2 s more per answer and one recurring false refusal ("What are the names of the moons of Mars?"). The one retry ran (mostly on off-topic questions) but did not rescue any answer in these runs: the relevance check is what made the difference. An answer counts as a refusal only if it starts with one (first 150 characters). With small sample sizes (14 / 11 questions) these numbers show a direction, not a guarantee. For a document assistant, not inventing answers matters more than 2 seconds, so `langgraph` is the default; `langchain` stays one setting away when speed matters more.
+
+**Update (summary tool fix):** with the old tool name `summarize_document`, qwen2.5:3b returned an empty reply for summary requests in chat ("Summarize coffee_history.pdf" was the tool-choice miss above). After renaming it `get_summary`, clarifying its description and telling the model which documents are selected in the UI, one new LangGraph run gave: tool choice **14/14** (the model alone, before the safety check), answer accuracy 13/14, off-topic refused 11/11. Its average latency (8.4 s) was measured while the app was also in use, so it is not comparable with the table.
 
 ## 🚀 Getting started
 

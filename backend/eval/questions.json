@@ -41,8 +41,8 @@
   },
   "_comment_tools": "LangGraph engine only: the tool the model should pick. Routing questions above count too (chat -> none, doc -> search_documents).",
   "tools": [
-    {"q": "Summarize coffee_history.pdf", "tool": "summarize_document"},
-    {"q": "Give me an overview of the solar system notes", "tool": "summarize_document"},
+    {"q": "Summarize coffee_history.pdf", "tool": "get_summary"},
+    {"q": "Give me an overview of the solar system notes", "tool": "get_summary"},
     {"q": "Quiz me on coffee_history.pdf", "tool": "generate_quiz"},
     {"q": "Make a 3-question test about the volcano report", "tool": "generate_quiz"}
   ]
